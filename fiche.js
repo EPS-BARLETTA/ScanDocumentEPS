@@ -335,6 +335,28 @@
     return s / n;
   }
 
+  // Échantillons denses à l'intérieur d'une bulle (pour repérer un simple trait, une croix, un « v »)
+  function diskSamples(gray, w, h, H, cx, cy, rad) {
+    const out = [];
+    for (const f of [0, 0.22, 0.45, 0.68, 0.9]) {
+      const k = f === 0 ? 1 : Math.round(6 + f * 18);
+      for (let i = 0; i < k; i++) { const t = i * 2 * Math.PI / k + f, [u, v] = H(cx + f * rad * Math.cos(t), cy + f * rad * Math.sin(t)); out.push(bilinear(gray, w, h, u, v)); }
+    }
+    return out;
+  }
+  // part d'encre dans chaque bulle → bulle marquée si nettement au-dessus des autres de la colonne
+  function readInk(fr) {
+    const sorted = fr.slice().sort((a, b) => a - b), med = sorted[Math.floor(fr.length / 2)];
+    const order = fr.map((v, k) => ({ v, k })).sort((a, b) => b.v - a.v), d1 = order[0].v - med, d2 = order[1].v - med;
+    if (d1 < 0.09) return { digit: null, state: 'empty' };
+    if (d2 < 0.09 || d1 > 2.2 * d2) return { digit: order[0].k, state: 'ok' };
+    return { digit: order[0].k, state: 'double' };
+  }
+  function merge(a, b) { // a : noirceur moyenne, b : part d'encre
+    if (a.state === 'double' || b.state === 'double') return { digit: (b.digit ?? a.digit), state: 'double' };
+    if (a.state === 'empty') return b; if (b.state === 'empty') return a;
+    return a.digit === b.digit ? a : { digit: b.digit, state: 'double' };
+  }
   function readGroup(vals) {
     // seuil relatif à la colonne : tolère crayon à papier, stylo clair et éclairage inégal
     const sorted = vals.slice().sort((a, b) => a - b), med = sorted[Math.floor(vals.length / 2)];
@@ -412,7 +434,9 @@
     for (const R of lay.rows) {
       const { row, y } = R;
       const vals = R.groups.map(g => Array.from({ length: g.n }, (_, k) => sampleDisk(gray, w, h, H, g.x + k * lay.sp, y, lay.r * 0.62)));
-      const digits = vals.map(readGroup);
+      const smp = R.groups.map(g => Array.from({ length: g.n }, (_, k) => diskSamples(gray, w, h, H, g.x + k * lay.sp, y, lay.r * 0.8)));
+      const allS = smp.flat(2).sort((a, b) => a - b), paper = allS[Math.floor(allS.length * 0.8)], cut = paper * 0.8;
+      const digits = vals.map((v, gi) => merge(readGroup(v), readInk(smp[gi].map(arr => arr.filter(x => x < cut).length / arr.length))));
       // temps sous la minute : colonne « minutes » laissée vide = 0
       if (row.type === 'time' && digits[0].state === 'empty' && digits[1].state !== 'empty' && digits[2].state !== 'empty') digits[0] = { digit: 0, state: 'ok' };
       const all = vals.flat().sort((a, b) => a - b), med = all[Math.floor(all.length / 2)];

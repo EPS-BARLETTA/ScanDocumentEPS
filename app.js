@@ -30,7 +30,7 @@ const BAREMES = {
     // AFL1 efficacité technique /6 : écart entre le 200 m le plus rapide et le plus lent (deux 800 m)
     regul: [[20, 0.5], [18, 1], [16, 1.5], [14, 2], [12, 2.5], [10, 3], [9, 3.5], [8, 4], [7, 4.5], [6, 5], [5, 5.5]],
     // AFL2 « estimer ses performances » : écarts cumulés annoncés / réalisés → degré
-    afl2: [[8, 2], [15, 1.5], [24, 1]]
+    afl2: [[7, 2], [15, 1.5], [24, 1]]
   }
 };
 const CHOIX = { '2-6': [2, 6], '4-4': [4, 4], '6-2': [6, 2] }; // points max AFL2 / AFL3 selon le choix de l'élève
@@ -380,7 +380,7 @@ function baremeFromRows(rows, fullText) {
   if (i0 >= 0) {
     const zone = t.slice(Math.max(0, i0 - 400), i0 + 1500);
     const lt = zone.match(/<\s*(\d{1,2})/), pairs = [...zone.matchAll(/(\d{1,2})\s*(?:et|à|-|–)\s*(\d{1,2})/g)].map(m => [+m[1], +m[2]]).filter(p => p[0] < p[1] && p[1] <= 60).sort((a, b) => a[0] - b[0]);
-    if (lt && pairs.length >= 2) out.afl2 = [+lt[1], pairs[0][1], pairs[1][1]];
+    if (lt && pairs.length >= 2) out.afl2 = [+lt[1] - 1, pairs[0][1], pairs[1][1]];
   }
   return out;
 }
