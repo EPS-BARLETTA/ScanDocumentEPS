@@ -336,9 +336,17 @@
   }
 
   function readGroup(vals) {
-    const sorted = vals.slice().sort((a, b) => a - b), med = sorted[Math.floor(vals.length / 2)], thr = med * 0.75;
+    // seuil relatif à la colonne : tolère crayon à papier, stylo clair et éclairage inégal
+    const sorted = vals.slice().sort((a, b) => a - b), med = sorted[Math.floor(vals.length / 2)];
+    const dev = vals.map(v => Math.abs(v - med)).sort((a, b) => a - b), mad = dev[Math.floor(dev.length / 2)];
+    const thr = med - Math.max(0.08 * med, 5 * mad + 4);
     const marked = vals.map((v, k) => ({ v, k })).filter(o => o.v < thr).sort((a, b) => a.v - b.v);
-    if (!marked.length) return { digit: null, state: 'empty' };
+    if (!marked.length) {
+      // marque claire mais nettement isolée (crayon, stylo peu appuyé)
+      const order = vals.map((v, k) => ({ v, k })).sort((a, b) => a.v - b.v), d1 = med - order[0].v, d2 = Math.max(0, med - order[1].v);
+      if (d1 >= 0.05 * med && d1 >= 3 * d2 + 6 && d1 >= 6 * mad) return { digit: order[0].k, state: 'ok' };
+      return { digit: null, state: 'empty' };
+    }
     if (marked.length === 1) return { digit: marked[0].k, state: 'ok' };
     const d1 = med - marked[0].v, d2 = med - marked[1].v;
     return { digit: marked[0].k, state: d1 > 2.2 * d2 ? 'ok' : 'double' };
