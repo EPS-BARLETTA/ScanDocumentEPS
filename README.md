@@ -2,18 +2,15 @@
 
 Application web mobile/iPad : fiches à bulles personnalisables, lecture automatique des photos, tableau de résultats.
 
-## Fonctionnement
+## Fonctionnement (4 étapes)
 
-1. **Mes classes** : créer la classe, importer le CSV PRONOTE (colonne « Élèves »).
-2. **Fiches** : construire sa fiche. Des blocs (course, série…) contenant des lignes : **temps** (min:s, minutes 0-5 ou 0-9), **nombre** (0 à 99) ou **choix** (A B C D, 1 à 5…). Une ligne de temps nommée « Estimation » sert au calcul de l'écart estimation/réalisation ; le dernier temps d'un bloc est son temps final. Aperçu en direct. Format automatique : A5 si la fiche tient, sinon A4. Modèles fournis : 2 × 800 m et 3 × 500 m. Une fiche imprimée ou utilisée est verrouillée (la dupliquer pour la modifier) pour que les exemplaires papier restent lisibles.
-3. **🖨 Fiches nominatives de la classe** : une fiche par élève, avec son nom et un QR code (A5 : 2 par feuille A4, à couper ; A4 : 1 par feuille). Imprimer en taille réelle. Des **fiches de secours** vierges sont aussi disponibles.
-4. Pendant l'épreuve, l'observateur écrit chaque valeur dans la case puis noircit une bulle par colonne.
-5. **Scanner** : photographier ou importer les fiches entières, dans n'importe quel ordre. Chaque photo est lue sur l'appareil :
-   - les 4 carrés noirs servent à redresser la fiche ;
-   - le QR code identifie l'élève et la fiche utilisée ;
-   - les bulles donnent les temps.
-6. **Résultats** (par classe et par fiche) : les fiches lues sans alerte apparaissent en « Lu ✓ à valider » et se valident d'un coup. Les autres sont « À vérifier ⚠ » avec la raison (deux bulles dans une colonne, ligne incomplète, case « corr. » cochée, temps incohérents…) et la photo à côté pour corriger.
-7. Export CSV et sauvegarde JSON.
+1. **Classes** : répertoire des classes rangées par dossiers (ex. « 2026-2027 »). Import du CSV PRONOTE : avec une colonne « Classe », toutes les classes sont créées d'un coup ; sinon les élèves vont dans la classe ouverte.
+2. **Bibliothèque** :
+   - *Modèles prêts à l'emploi* : 2 × 800 m avec estimation, 3 × 500 m avec estimation. « Utiliser ce modèle » en fait une copie.
+   - *Mes fiches* : catalogue de tes fiches (classes pour lesquelles elles ont été imprimées, fiches lues et validées). « Modifier » ouvre l'éditeur : blocs (course, série…) et lignes **temps** (min:s), **nombre** (0-99) ou **choix** (A B C D…). Aperçu en direct, A5 si possible sinon A4. Une fiche imprimée ou utilisée est verrouillée (la dupliquer pour la modifier).
+   - **🖨 Préparer l'évaluation** : choisir les classes et le nombre de fiches de secours, puis **télécharger le dossier à imprimer** (ZIP : un fichier HTML par classe, prêt à imprimer en taille réelle) ou imprimer directement.
+3. **Scanner** : photographier ou importer les fiches entières, dans n'importe quel ordre. Le QR code identifie l'élève et la fiche, les bulles donnent les valeurs. Lecture sur l'appareil.
+4. **Résultats** : par fiche, pour une classe ou toutes les classes. Les fiches lues sans alerte (« Lu ✓ à valider ») se valident d'un coup ; les autres sont « À vérifier ⚠ » avec la raison et la photo. **Export HTML** (un tableau par classe + détail des valeurs), CSV en option.
 
 ## Erreurs prévues
 

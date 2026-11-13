@@ -1,7 +1,7 @@
 'use strict';
 /* ScanDocument EPS — application (classes, modèles de fiches, scan, résultats). */
 const DB = 'scan-document-eps-v1';
-let db, photoData = null, editing = null, queueEditing = null, editorTpl = null, batchBusy = false;
+let db, photoData = null, editing = null, queueEditing = null, editorTpl = null, editorOpen = false, batchBusy = false;
 let state = { classes: [], students: [], scans: [], queue: [], templates: [] };
 const $ = id => document.getElementById(id);
 const uid = () => crypto.randomUUID();
@@ -9,13 +9,15 @@ const sid = p => p + Math.random().toString(36).slice(2, 8);
 const escapeHtml = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const today = () => new Date().toISOString().slice(0, 10);
 
-/* ---------- Modèles par défaut ---------- */
-const DEFAULT_TEMPLATES = [
+/* ---------- Bibliothèque de modèles ---------- */
+const LIBRARY = [
   { id: 't2x800', name: 'Demi-fond 2 × 800 m', format: 'auto', minutesMax: 5, cumulative: true,
     blocks: [1, 2].map(i => ({ title: (i === 1 ? '1er' : '2e') + ' 800 m', rows: [['e', 'Estimation'], ['a', '200 m'], ['b', '400 m'], ['c', '600 m'], ['d', '800 m']].map(([k, l]) => ({ id: 'c' + i + k, label: l, type: 'time' })) })) },
   { id: 't3x500', name: 'Demi-fond 3 × 500 m', format: 'auto', minutesMax: 5, cumulative: true,
     blocks: [1, 2, 3].map(i => ({ title: 'Course ' + i, rows: [['e', 'Estimation'], ['a', '250 m'], ['b', '500 m']].map(([k, l]) => ({ id: 'c' + i + k, label: l, type: 'time' })) })) }
 ];
+const LIB_DESC = { t2x800: '2 courses · estimation + passages 200, 400, 600 et 800 m (cumulés) · A5', t3x500: '3 courses · estimation + passages 250 et 500 m (cumulés) · A5' };
+const schoolYear = () => { const d = new Date(), y = d.getFullYear(); return d.getMonth() >= 7 ? y + '-' + (y + 1) : (y - 1) + '-' + y; };
 const tplById = id => state.templates.find(t => t.id === id);
 const className = id => state.classes.find(c => c.id === id)?.name || '';
 
@@ -27,7 +29,10 @@ function persist() { return new Promise((resolve, reject) => { const t = db.tran
 function migrate() {
   state.queue = state.queue || [];
   state.templates = state.templates || [];
-  for (const d of DEFAULT_TEMPLATES) if (!tplById(d.id)) state.templates.push(JSON.parse(JSON.stringify(d)));
+  // anciennes fiches 2 × 800 (avant les modèles) : on garde le modèle correspondant
+  if (!tplById('t2x800') && (state.scans.some(s => s.races || s.templateId === 't2x800') || state.queue.length)) state.templates.push(Object.assign(JSON.parse(JSON.stringify(LIBRARY[0])), { createdAt: today() }));
+  for (const c of state.classes) c.folder = c.folder || schoolYear();
+  for (const t of state.templates) { t.printedFor = t.printedFor || []; t.createdAt = t.createdAt || today(); }
   for (const s of state.scans) {
     if (s.races && !s.values) {
       s.templateId = 't2x800'; s.values = {};
@@ -55,34 +60,104 @@ function fillSelect(id, items, keepFirst) {
 
 function render() {
   const cls = state.classes.map(c => [c.id, c.name]), tpls = state.templates.map(t => [t.id, t.name]);
-  ['classSelect', 'scanClass', 'resultClass', 'batchClass'].forEach(id => fillSelect(id, cls, true));
-  ['printTpl', 'batchTpl', 'resultTpl', 'scanTpl'].forEach(id => fillSelect(id, tpls, true));
-  $('classList').innerHTML = state.classes.map(c => '<span class="pill" style="display:inline-block;margin:8px 5px 0 0">' + escapeHtml(c.name) + ' · ' + state.students.filter(s => s.classId === c.id).length + ' élèves</span>').join('') || '<p class="muted">Aucune classe pour le moment.</p>';
-  $('roster').innerHTML = state.students.filter(s => s.classId === currentClass()).sort((a, b) => a.name.localeCompare(b.name, 'fr')).map(s => '<div class="rowcard flex"><span class="grow">' + escapeHtml(s.name) + '</span><button class="secondary" onclick="printStudent(\'' + s.id + '\')">🖨 Fiche</button><button class="secondary" onclick="removeStudent(\'' + s.id + '\')">Retirer</button></div>').join('');
+  ['classSelect', 'scanClass', 'batchClass'].forEach(id => fillSelect(id, cls, true));
+  fillSelect('resultClass', [['*', '— Toutes les classes —'], ...cls], false); if (!$('resultClass').value) $('resultClass').value = cls[0]?.[0] || '*';
+  ['batchTpl', 'resultTpl', 'scanTpl'].forEach(id => fillSelect(id, tpls, true));
+  renderDirectory();
+  $('roster').innerHTML = state.students.filter(s => s.classId === currentClass()).sort((a, b) => a.name.localeCompare(b.name, 'fr')).map(s => '<div class="rowcard flex"><span class="grow">' + escapeHtml(s.name) + '</span><button class="secondary" onclick="openEval({studentId:\'' + s.id + '\'})">🖨 Réimprimer sa fiche</button><button class="secondary" onclick="removeStudent(\'' + s.id + '\')">Retirer</button></div>').join('');
   const previous = $('scanStudent').value;
   $('scanStudent').innerHTML = '<option value="">— Élève non identifié —</option>' + state.students.filter(s => s.classId === $('scanClass').value).sort((a, b) => a.name.localeCompare(b.name, 'fr')).map(s => '<option value="' + s.id + '">' + escapeHtml(s.name) + '</option>').join('');
   $('scanStudent').value = state.students.some(s => s.id === previous && s.classId === $('scanClass').value) ? previous : '';
-  renderResults(); renderBatch(); renderEditor(); calculate();
+  renderResults(); renderBatch(); renderLibrary(); renderEditor(); calculate();
 }
 
+/* ---------- Répertoire des classes ---------- */
+const folders = () => [...new Set(state.classes.map(c => c.folder || schoolYear()))].sort((a, b) => b.localeCompare(a, 'fr'));
+function classWork(cid) {
+  const studs = state.students.filter(s => s.classId === cid);
+  return state.templates.map(t => {
+    const latest = studs.map(s => latestScan(s.id, t.id)).filter(Boolean);
+    const printed = (t.printedFor || []).some(p => p.classId === cid);
+    if (!latest.length && !printed) return null;
+    return { t, total: studs.length, read: latest.length, valid: latest.filter(r => r.status === 'validated').length };
+  }).filter(Boolean);
+}
+function renderDirectory() {
+  $('folderList').innerHTML = folders().map(f => '<option value="' + escapeHtml(f) + '">').join('');
+  if (!$('classFolder').value) $('classFolder').value = folders()[0] || schoolYear();
+  const sel = currentClass();
+  $('classDetail').classList.toggle('hidden', !state.classes.length);
+  $('directory').innerHTML = folders().map(f => {
+    const cls = state.classes.filter(c => (c.folder || schoolYear()) === f).sort((a, b) => a.name.localeCompare(b.name, 'fr', { numeric: true }));
+    return '<div class="folder"><div class="flex"><h3 class="grow">📁 ' + escapeHtml(f) + ' <span class="muted">· ' + cls.length + ' classe(s)</span></h3><button class="mini" onclick="renameFolder(\'' + escapeHtml(f).replace(/'/g, "\\'") + '\')">Renommer</button></div><div class="cards" style="margin-top:8px">' + cls.map(c => {
+      const n = state.students.filter(s => s.classId === c.id).length, work = classWork(c.id);
+      return '<div class="cls' + (c.id === sel ? ' sel' : '') + '"><div class="flex"><b class="grow">' + escapeHtml(c.name) + '</b><span class="pill">' + n + ' élèves</span></div>' +
+        '<div class="muted" style="margin:6px 0">' + (work.length ? work.map(w => escapeHtml(w.t.name) + ' : ' + w.valid + ' validées · ' + w.read + ' lues / ' + w.total).join('<br>') : 'Aucune fiche pour le moment') + '</div>' +
+        '<button class="mini" onclick="openClass(\'' + c.id + '\')">Ouvrir</button></div>';
+    }).join('') + '</div></div>';
+  }).join('') || '<p class="muted">Aucune classe pour le moment : crée-en une ou importe un CSV PRONOTE.</p>';
+}
+function openClass(id) { $('classSelect').value = id; render(); $('classDetail').scrollIntoView({ behavior: 'smooth' }); }
+async function moveClass(id) { const c = state.classes.find(x => x.id === id); const f = prompt('Dossier de la classe ' + c.name + ' :', c.folder); if (f && f.trim()) { c.folder = f.trim(); await persist(); render(); } }
+async function renameClass(id) { const c = state.classes.find(x => x.id === id); const n = prompt('Nouveau nom :', c.name); if (n && n.trim()) { c.name = n.trim(); await persist(); render(); } }
+async function renameFolder(f) { const n = prompt('Nouveau nom du dossier :', f); if (!n || !n.trim()) return; state.classes.forEach(c => { if (c.folder === f) c.folder = n.trim(); }); await persist(); render(); }
+async function deleteClass(id) {
+  const c = state.classes.find(x => x.id === id);
+  if (state.scans.some(x => x.classId === id)) return alert('Des fiches lues sont liées à cette classe : suppression impossible. Tu peux la déplacer dans un dossier « Archives ».');
+  if (!confirm('Supprimer la classe ' + c.name + ' et sa liste d’élèves ?')) return;
+  state.classes = state.classes.filter(x => x.id !== id); state.students = state.students.filter(s => s.classId !== id); state.queue = state.queue.filter(q => q.classId !== id);
+  await persist(); render();
+}
+
+/* ---------- Bibliothèque ---------- */
+function thumb(t) { const lay = Fiche.layoutFor(t); return '<div class="thumb">' + Fiche.ficheSVG({ tpl: t, name: 'NOM Prénom', className: 'Classe', payload: Fiche.studentPayload('apercu', t.id || 'x'), layout: lay }) + '</div>'; }
+function renderLibrary() {
+  if (!$('libraryCards')) return;
+  $('libraryCards').innerHTML = LIBRARY.map((t, i) => '<div class="card">' + thumb(t) + '<h4>' + escapeHtml(t.name) + '</h4><div class="muted">' + escapeHtml(LIB_DESC[t.id] || '') + '</div><div class="acts"><button onclick="useModel(' + i + ')">Utiliser ce modèle</button></div></div>').join('');
+  $('myCards').innerHTML = state.templates.map(t => {
+    const lay = Fiche.layoutFor(t), sc = state.scans.filter(x => x.templateId === t.id);
+    const pc = [...new Set((t.printedFor || []).map(p => className(p.classId)).filter(Boolean))];
+    const sclasses = [...new Set(sc.map(x => className(x.classId)).filter(Boolean))];
+    const info = [(lay.ok ? lay.fmt : '⚠') + ' · ' + t.blocks.reduce((a, b) => a + b.rows.length, 0) + ' lignes', 'Créée le ' + new Date(t.createdAt || today()).toLocaleDateString('fr-FR'), pc.length ? 'Imprimée pour : ' + pc.join(', ') : 'Jamais imprimée', sc.length ? sc.length + ' fiche(s) lue(s), ' + sc.filter(x => x.status === 'validated').length + ' validée(s)' + (sclasses.length ? ' · ' + sclasses.join(', ') : '') : 'Aucune fiche lue'];
+    return '<div class="card">' + thumb(t) + '<h4>' + escapeHtml(t.name) + (t.locked ? ' 🔒' : '') + '</h4><div class="muted">' + info.map(escapeHtml).join('<br>') + '</div><div class="acts"><button onclick="openEval({tplId:\'' + t.id + '\'})">🖨 Préparer l’évaluation</button><button class="secondary" onclick="editTpl(\'' + t.id + '\')">' + (t.locked ? 'Voir' : 'Modifier') + '</button></div></div>';
+  }).join('') || '<p class="muted">Aucune fiche : choisis un modèle ci-dessus ou crée une fiche vierge.</p>';
+}
+async function useModel(i) {
+  const t = JSON.parse(JSON.stringify(LIBRARY[i])); t.id = sid('t'); t.createdAt = today(); t.printedFor = []; t.locked = false;
+  const same = state.templates.filter(x => x.name === t.name || x.name.startsWith(t.name + ' (')).length; if (same) t.name += ' (' + (same + 1) + ')';
+  state.templates.push(t); await persist(); editTpl(t.id);
+}
+function editTpl(id) { editorTpl = id; editorOpen = true; render(); $('tplEditor').scrollIntoView({ behavior: 'smooth' }); }
+function closeEditor() { editorOpen = false; render(); }
+
+
 /* ---------- Classes et élèves ---------- */
-function addClass() { const name = $('className').value.trim(); if (!name) return alert('Indique un nom de classe'); const c = { id: uid(), name }; state.classes.push(c); $('className').value = ''; persist(); render(); $('classSelect').value = c.id; render(); }
+function addClass() { const name = $('className').value.trim(); if (!name) return alert('Indique un nom de classe'); const c = { id: uid(), name, folder: $('classFolder').value.trim() || schoolYear() }; state.classes.push(c); $('className').value = ''; persist(); render(); $('classSelect').value = c.id; render(); }
 function addStudent() { const c = currentClass(), name = $('studentName').value.trim(); if (!c || !name) return alert('Choisis une classe et un nom'); if (state.students.some(s => s.classId === c && s.name.toLocaleLowerCase() === name.toLocaleLowerCase())) return alert('Cet élève existe déjà'); state.students.push({ id: uid(), classId: c, name }); $('studentName').value = ''; persist(); render(); }
 async function importRoster(e) {
-  const f = e.target.files[0], c = currentClass(); if (!f || !c) return alert('Crée d’abord une classe');
+  const f = e.target.files[0]; let c = currentClass(); if (!f) return;
   const text = await f.text(), lines = text.replace(/^﻿/, '').split(/\r?\n/).map(x => x.trim()).filter(Boolean);
   function parse(line, sep) { const out = []; let value = '', quoted = false; for (let i = 0; i < line.length; i++) { const ch = line[i]; if (ch === '"') { if (quoted && line[i + 1] === '"') { value += '"'; i++; } else quoted = !quoted; } else if (ch === sep && !quoted) { out.push(value.trim()); value = ''; } else value += ch; } out.push(value.trim()); return out; }
   const header = lines[0] || '', sep = header.includes(';') ? ';' : header.includes('\t') ? '\t' : ',';
   const headings = parse(header, sep).map(x => x.toLocaleLowerCase('fr').normalize('NFD').replace(/[̀-ͯ]/g, ''));
   const nameCol = headings.findIndex(x => ['eleves', 'eleve', 'nom prenom', 'nom et prenom'].includes(x)), surnameCol = headings.findIndex(x => x === 'nom'), firstnameCol = headings.findIndex(x => x === 'prenom');
-  const hasHeader = nameCol >= 0 || surnameCol >= 0; let n = 0;
+  const classCol = headings.findIndex(x => x === 'classe' || x === 'classes' || x === 'division');
+  const hasHeader = nameCol >= 0 || surnameCol >= 0; let n = 0; const created = [];
+  if (classCol < 0 && !c) { e.target.value = ''; return alert('Crée d’abord une classe, ou importe un fichier avec une colonne « Classe »'); }
+  const folder = $('classFolder').value.trim() || schoolYear();
   for (const line of lines.slice(hasHeader ? 1 : 0)) {
     const cells = parse(line, sep);
+    if (classCol >= 0) {
+      const cn = (cells[classCol] || '').trim(); if (!cn) continue;
+      let cl = state.classes.find(x => x.name.toLocaleLowerCase('fr') === cn.toLocaleLowerCase('fr') && x.folder === folder);
+      if (!cl) { cl = { id: uid(), name: cn, folder }; state.classes.push(cl); created.push(cn); }
+      c = cl.id;
+    }
     let name = nameCol >= 0 ? cells[nameCol] : surnameCol >= 0 ? (cells[surnameCol] || '') + ' ' + (firstnameCol >= 0 ? cells[firstnameCol] || '' : '') : cells.length > 1 ? cells[0] + ' ' + cells[1] : cells[0];
     name = (name || '').trim();
     if (name && !state.students.some(s => s.classId === c && s.name.toLocaleLowerCase('fr') === name.toLocaleLowerCase('fr'))) { state.students.push({ id: uid(), classId: c, name }); n++; }
   }
-  await persist(); e.target.value = ''; render(); alert(n + ' élèves importés (noms et prénoms uniquement)');
+  await persist(); e.target.value = ''; render(); alert(n + ' élèves importés (noms et prénoms uniquement)' + (created.length ? '\n' + created.length + ' classe(s) créée(s) dans « ' + folder + ' » : ' + created.join(', ') : ''));
 }
 function removeStudent(id) { if (state.scans.some(x => x.studentId === id)) return alert('Élève lié à une fiche : suppression bloquée'); if (confirm('Supprimer cet élève ?')) { state.students = state.students.filter(x => x.id !== id); persist(); render(); } }
 
@@ -92,6 +167,8 @@ function curTpl() { if (!tplById(editorTpl)) editorTpl = state.templates[0]?.id;
 function tplUsed(t) { return state.scans.some(s => s.templateId === t.id); }
 function renderEditor() {
   if (!$('tplForm')) return;
+  $('tplEditor').classList.toggle('hidden', !editorOpen || !state.templates.length);
+  if (!editorOpen) return;
   fillSelect('tplSelect', state.templates.map(t => [t.id, t.name]), true);
   const t = curTpl(); if (!t) { $('tplForm').innerHTML = ''; $('tplPreview').innerHTML = ''; return; }
   $('tplSelect').value = t.id;
@@ -138,32 +215,85 @@ const moveRow = (bi, ri, d) => tplMut(t => { const r = t.blocks[bi].rows, j = ri
 const addBlock = () => tplMut(t => t.blocks.push({ title: 'Bloc ' + (t.blocks.length + 1), rows: [{ id: sid('r'), label: 'Estimation', type: 'time' }, { id: sid('r'), label: 'Temps final', type: 'time' }] }));
 const delBlock = bi => { if (confirm('Supprimer ce bloc ?')) tplMut(t => t.blocks.splice(bi, 1)); };
 const moveBlock = (bi, d) => tplMut(t => { const j = bi + d; if (j < 0 || j >= t.blocks.length) return; [t.blocks[bi], t.blocks[j]] = [t.blocks[j], t.blocks[bi]]; });
-async function newTpl() { const t = { id: sid('t'), name: 'Nouvelle fiche', format: 'auto', minutesMax: 5, cumulative: true, blocks: [{ title: 'Course 1', rows: [{ id: sid('r'), label: 'Estimation', type: 'time' }, { id: sid('r'), label: 'Temps final', type: 'time' }] }] }; state.templates.push(t); editorTpl = t.id; await persist(); render(); }
-async function dupTpl() { const s = curTpl(); if (!s) return; const t = JSON.parse(JSON.stringify(s)); t.id = sid('t'); t.name = s.name + ' (copie)'; t.locked = false; t.blocks.forEach(b => b.rows.forEach(r => { r.id = sid('r'); })); state.templates.push(t); editorTpl = t.id; await persist(); render(); }
-async function delTpl() { const t = curTpl(); if (!t) return; if (tplUsed(t)) return alert('Des fiches lues utilisent ce modèle : suppression impossible.'); if (state.templates.length < 2) return alert('Garde au moins une fiche.'); if (!confirm('Supprimer la fiche « ' + t.name + ' » ?' + (t.locked ? ' Les fiches déjà imprimées ne pourront plus être lues.' : ''))) return; state.templates = state.templates.filter(x => x.id !== t.id); editorTpl = null; await persist(); render(); }
+async function newTpl() { const t = { id: sid('t'), name: 'Nouvelle fiche', createdAt: today(), printedFor: [], format: 'auto', minutesMax: 5, cumulative: true, blocks: [{ title: 'Course 1', rows: [{ id: sid('r'), label: 'Estimation', type: 'time' }, { id: sid('r'), label: 'Temps final', type: 'time' }] }] }; state.templates.push(t); await persist(); editTpl(t.id); }
+async function dupTpl() { const s = curTpl(); if (!s) return; const t = JSON.parse(JSON.stringify(s)); t.id = sid('t'); t.name = s.name + ' (copie)'; t.locked = false; t.printedFor = []; t.createdAt = today(); t.blocks.forEach(b => b.rows.forEach(r => { r.id = sid('r'); })); state.templates.push(t); await persist(); editTpl(t.id); }
+async function delTpl() { const t = curTpl(); if (!t) return; if (tplUsed(t)) return alert('Des fiches lues utilisent ce modèle : suppression impossible.'); if (!confirm('Supprimer la fiche « ' + t.name + ' » ?' + (t.locked ? ' Les fiches déjà imprimées ne pourront plus être lues.' : ''))) return; state.templates = state.templates.filter(x => x.id !== t.id); editorTpl = null; editorOpen = false; await persist(); render(); }
 async function unlockTpl() { const t = curTpl(); if (!t) return; if (!confirm('Si tu modifies cette fiche, les exemplaires déjà imprimés ne seront plus lus correctement. Déverrouiller ?')) return; t.locked = false; await persist(); render(); }
 
-/* ---------- Impression ---------- */
-function openPrint(list, info) { $('printPages').innerHTML = Fiche.pagesSVG(list).join(''); $('printInfo').textContent = info; $('printView').classList.remove('hidden'); $('printView').scrollTop = 0; }
+/* ---------- Évaluation : impression et dossier ---------- */
+let evCtx = {};
+function openPrintPages(pages, info) { $('printPages').innerHTML = pages.join(''); $('printInfo').textContent = info; $('printView').classList.remove('hidden'); $('printView').scrollTop = 0; }
 function closePrint() { $('printView').classList.add('hidden'); $('printPages').innerHTML = ''; }
-function printTemplate() { const t = tplById($('printTpl').value); if (!t) { alert('Crée d’abord une fiche'); return null; } const lay = Fiche.layoutFor(t); if (!lay.ok) { alert('Fiche impossible à imprimer : ' + lay.error); return null; } return { t, lay }; }
-async function markPrinted(t) { if (!t.locked) { t.locked = true; await persist(); } }
-async function printClass() {
-  const c = currentClass(); if (!c) return alert('Crée d’abord une classe');
-  const p = printTemplate(); if (!p) return;
-  const list = state.students.filter(s => s.classId === c).sort((a, b) => a.name.localeCompare(b.name, 'fr'));
-  if (!list.length) return alert('Aucun élève dans cette classe');
-  await markPrinted(p.t);
-  const sheets = p.lay.fmt === 'A5' ? Math.ceil(list.length / 2) : list.length;
-  openPrint(list.map(s => ({ tpl: p.t, name: s.name, className: className(c), payload: Fiche.studentPayload(s.id, p.t.id) })), list.length + ' fiches ' + p.lay.fmt + ' · ' + sheets + ' feuille(s) A4 · imprimer en taille réelle (100 %)');
+function openEval(ctx) {
+  if (!state.templates.length) { alert('Ajoute d’abord une fiche depuis la Bibliothèque (étape 2).'); view('models'); return; }
+  if (!state.classes.length) { alert('Crée d’abord une classe (étape 1).'); view('classes'); return; }
+  evCtx = ctx || {};
+  fillSelect('evTpl', state.templates.map(t => [t.id, t.name]), true);
+  if (evCtx.tplId) $('evTpl').value = evCtx.tplId;
+  const st = evCtx.studentId ? state.students.find(x => x.id === evCtx.studentId) : null;
+  $('evClassBox').classList.toggle('hidden', !!st); $('evStudentBox').classList.toggle('hidden', !st); $('evZipBtn').classList.toggle('hidden', !!st);
+  if (st) $('evStudentBox').textContent = 'Fiche de ' + st.name + ' (' + className(st.classId) + ')';
+  const pre = evCtx.classId || currentClass();
+  $('evClasses').innerHTML = folders().map(f => '<h4>📁 ' + escapeHtml(f) + '</h4>' + state.classes.filter(c => c.folder === f).sort((a, b) => a.name.localeCompare(b.name, 'fr', { numeric: true })).map(c => '<label><input type="checkbox" value="' + c.id + '"' + (c.id === pre ? ' checked' : '') + ' onchange="evInfo()"> ' + escapeHtml(c.name) + ' <span class="muted">(' + state.students.filter(s => s.classId === c.id).length + ' élèves)</span></label>').join('')).join('');
+  $('evalDialog').classList.remove('hidden'); evInfo();
 }
-async function printStudent(id) { const s = state.students.find(x => x.id === id), p = printTemplate(); if (!s || !p) return; await markPrinted(p.t); openPrint([{ tpl: p.t, name: s.name, className: className(s.classId), payload: Fiche.studentPayload(s.id, p.t.id) }], 'Fiche de ' + s.name + ' · ' + p.t.name); }
-async function printSpare() {
-  const c = currentClass(); if (!c) return alert('Crée d’abord une classe');
-  const p = printTemplate(); if (!p) return;
-  const n = Math.max(0, Math.min(40, parseInt(prompt('Combien de fiches de secours ?', '4'), 10) || 0)); if (!n) return;
-  await markPrinted(p.t);
-  openPrint(Array.from({ length: n }, () => ({ tpl: p.t, spare: true, className: className(c), payload: Fiche.sparePayload(c, p.t.id) })), n + ' fiche(s) de secours · ' + p.t.name);
+function closeEval() { $('evalDialog').classList.add('hidden'); }
+function evSelection() {
+  const t = tplById($('evTpl').value), lay = t ? Fiche.layoutFor(t) : null;
+  if (evCtx.studentId) { const s = state.students.find(x => x.id === evCtx.studentId); return { t, lay, groups: [{ c: s.classId, list: [{ tpl: t, name: s.name, className: className(s.classId), payload: Fiche.studentPayload(s.id, t.id) }] }] }; }
+  const spare = Math.max(0, Math.min(10, parseInt($('evSpare').value, 10) || 0));
+  const cids = [...document.querySelectorAll('#evClasses input:checked')].map(x => x.value);
+  const groups = cids.map(c => ({ c, list: state.students.filter(s => s.classId === c).sort((a, b) => a.name.localeCompare(b.name, 'fr')).map(s => ({ tpl: t, name: s.name, className: className(c), payload: Fiche.studentPayload(s.id, t.id) })).concat(Array.from({ length: spare }, () => ({ tpl: t, spare: true, className: className(c), payload: Fiche.sparePayload(c, t.id) }))) }));
+  return { t, lay, groups };
+}
+function evInfo() {
+  const { lay, groups } = evSelection();
+  if (!lay || !lay.ok) { $('evInfo').textContent = '⚠ ' + (lay ? lay.error : 'Choisis une fiche'); return; }
+  const n = groups.reduce((a, g) => a + g.list.length, 0), sheets = groups.reduce((a, g) => a + (lay.fmt === 'A5' ? Math.ceil(g.list.length / 2) : g.list.length), 0);
+  $('evInfo').textContent = n + ' fiche(s) ' + lay.fmt + ' · ' + sheets + ' feuille(s) A4' + (lay.fmt === 'A5' ? ' (2 fiches par feuille, à couper)' : '');
+}
+async function evMark(t, groups) { t.locked = true; t.printedFor = t.printedFor || []; for (const g of groups) if (!t.printedFor.some(p => p.classId === g.c)) t.printedFor.push({ classId: g.c, date: today() }); await persist(); render(); }
+async function evPrint() {
+  const { t, lay, groups } = evSelection(); if (!lay?.ok) return alert('Fiche impossible à imprimer : ' + (lay?.error || ''));
+  if (!groups.length || !groups.some(g => g.list.length)) return alert('Coche au moins une classe');
+  await evMark(t, groups); closeEval();
+  const pages = groups.flatMap(g => Fiche.pagesSVG(g.list));
+  openPrintPages(pages, t.name + ' · ' + groups.map(g => className(g.c)).join(', ') + ' · ' + pages.length + ' feuille(s) A4 · imprimer en taille réelle (100 %)');
+}
+const slug = x => String(x).normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '') || 'fiche';
+function printableHTML(title, pages) {
+  return '<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' + escapeHtml(title) + '</title><style>@page{size:A4 portrait;margin:0}body{margin:0;background:#5b6b7c;font-family:system-ui,sans-serif}.note{background:#123d66;color:#fff;padding:10px 14px}svg{display:block;width:min(96vw,210mm);height:auto;margin:12px auto;background:#fff}@media print{body{background:none}.note{display:none}svg{width:210mm;height:297mm;margin:0;break-after:page;page-break-after:always}}</style></head><body><div class="note">' + escapeHtml(title) + ' — imprimer en taille réelle (100 %), recto seul.</div>' + pages.join('') + '</body></html>';
+}
+async function evDownload() {
+  const { t, lay, groups } = evSelection(); if (!lay?.ok) return alert('Fiche impossible à imprimer : ' + (lay?.error || ''));
+  if (!groups.length) return alert('Coche au moins une classe');
+  await evMark(t, groups);
+  const dir = slug(t.name) + '_' + today() + '/', enc = new TextEncoder(), files = [];
+  for (const g of groups) files.push({ name: dir + slug(className(g.c)) + '.html', data: enc.encode(printableHTML(t.name + ' — ' + className(g.c), Fiche.pagesSVG(g.list))) });
+  files.push({ name: dir + 'LISEZ-MOI.txt', data: enc.encode(t.name + '\r\nPréparé le ' + new Date().toLocaleDateString('fr-FR') + '\r\n\r\nUn fichier par classe. Ouvrir, puis imprimer en taille réelle (100 %), recto seul.\r\n' + (lay.fmt === 'A5' ? 'Deux fiches A5 par feuille A4 : couper le long des pointillés.\r\n' : '') + 'Après l\'épreuve : photographier les fiches entières dans ScanDocument EPS (étape 3).\r\n\r\nClasses : ' + groups.map(g => className(g.c) + ' (' + g.list.length + ' fiches)').join(', ') + '\r\n') });
+  download(slug(t.name) + '_' + today() + '.zip', makeZip(files), 'application/zip');
+  closeEval();
+}
+/* ZIP sans compression (méthode « stockée ») */
+const CRC = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+function crc32(d) { let c = 0xFFFFFFFF; for (let i = 0; i < d.length; i++) c = CRC[(c ^ d[i]) & 255] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }
+function makeZip(files) {
+  const enc = new TextEncoder(), parts = [], central = []; let off = 0;
+  const d = new Date(), dt = ((d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() >> 1)) & 0xFFFF, dd = (((d.getFullYear() - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate()) & 0xFFFF;
+  for (const f of files) {
+    const name = enc.encode(f.name), crc = crc32(f.data), h = new DataView(new ArrayBuffer(30));
+    h.setUint32(0, 0x04034b50, true); h.setUint16(4, 20, true); h.setUint16(6, 0x0800, true); h.setUint16(8, 0, true); h.setUint16(10, dt, true); h.setUint16(12, dd, true);
+    h.setUint32(14, crc, true); h.setUint32(18, f.data.length, true); h.setUint32(22, f.data.length, true); h.setUint16(26, name.length, true); h.setUint16(28, 0, true);
+    parts.push(new Uint8Array(h.buffer), name, f.data);
+    const c = new DataView(new ArrayBuffer(46));
+    c.setUint32(0, 0x02014b50, true); c.setUint16(4, 20, true); c.setUint16(6, 20, true); c.setUint16(8, 0x0800, true); c.setUint16(10, 0, true); c.setUint16(12, dt, true); c.setUint16(14, dd, true);
+    c.setUint32(16, crc, true); c.setUint32(20, f.data.length, true); c.setUint32(24, f.data.length, true); c.setUint16(28, name.length, true); c.setUint32(42, off, true);
+    central.push(new Uint8Array(c.buffer), name);
+    off += 30 + name.length + f.data.length;
+  }
+  const size = central.reduce((a, x) => a + x.length, 0), e = new DataView(new ArrayBuffer(22));
+  e.setUint32(0, 0x06054b50, true); e.setUint16(8, files.length, true); e.setUint16(10, files.length, true); e.setUint32(12, size, true); e.setUint32(16, off, true);
+  return new Blob([...parts, ...central, new Uint8Array(e.buffer)], { type: 'application/zip' });
 }
 
 /* ---------- Calculs ---------- */
@@ -260,7 +390,7 @@ function readOpts() { return { templateFor: ref => tplById(ref.tpl || 't2x800'),
 async function readSafe(src) { try { return await Fiche.read(src, readOpts()); } catch (err) { return { markers: false, ref: null, values: {}, tplId: null, issues: ['Lecture impossible : ' + err.message] }; } }
 function addFromRead(read, photo, classId) {
   const st = read.ref?.kind === 'student' ? state.students.find(s => s.id === read.ref.id) : null;
-  if (st && read.markers && read.tplId) {
+  if (st && read.markers && read.tplId && read.tplId === (read.ref.tpl || 't2x800')) {
     const issues = [...read.issues];
     if (st.classId !== classId) issues.unshift('Fiche d’une autre classe (' + className(st.classId) + ')');
     const old = state.scans.filter(x => x.studentId === st.id && x.templateId === read.tplId);
@@ -322,22 +452,25 @@ function resultColumns(t) {
   if (hasTime) cols.push({ head: 'Écart fractions', get: m => m.pace == null ? '—' : round1(m.pace) + ' s' });
   return cols;
 }
+function classesUsing(t) { return state.classes.filter(c => state.scans.some(x => x.classId === c.id && x.templateId === t.id) || (t.printedFor || []).some(p => p.classId === c.id)).sort((a, b) => a.name.localeCompare(b.name, 'fr', { numeric: true })).map(c => c.id); }
+function resultStudents(c, t) { const cids = c === '*' ? classesUsing(t) : [c]; return cids.flatMap(cid => state.students.filter(s => s.classId === cid).sort((a, b) => a.name.localeCompare(b.name, 'fr'))); }
 function renderResults() {
-  const c = $('resultClass').value, t = tplById($('resultTpl').value); if (!t) return;
-  const students = state.students.filter(s => s.classId === c).sort((a, b) => a.name.localeCompare(b.name, 'fr'));
+  const c = $('resultClass').value, t = tplById($('resultTpl').value);
+  if (!t) { $('resultHead').innerHTML = ''; $('resultRows').innerHTML = ''; $('progress').textContent = 'Ajoute d’abord une fiche depuis la Bibliothèque.'; return; }
+  const students = resultStudents(c, t);
   const cols = resultColumns(t); let validated = 0, pending = 0, autoOk = 0;
   $('resultHead').innerHTML = '<tr><th>Élève</th>' + cols.map(x => '<th>' + escapeHtml(x.head) + '</th>').join('') + '<th>État</th><th>Action</th></tr>';
   $('resultRows').innerHTML = students.map(s => {
     const all = state.scans.filter(x => x.studentId === s.id && x.templateId === t.id), r = latestScan(s.id, t.id), m = r ? metrics(t, r.values) : null, st = scanState(r);
     if (st === 'validated') validated++; else if (st === 'auto') autoOk++; else if (r) pending++;
-    return '<tr><td>' + escapeHtml(s.name) + (all.length > 1 ? ' (' + all.length + ' fiches)' : '') + '</td>' + cols.map(x => '<td>' + (m ? escapeHtml(x.get(m, r.values, x.bi)) : '—') + '</td>').join('') + '<td><span class="pill ' + ({ validated: 'ok', auto: 'auto', check: 'warn' }[st] || '') + '">' + ({ validated: 'Validé', auto: 'Lu ✓ à valider', check: 'À vérifier ⚠' }[st] || 'Non scanné') + '</span></td><td>' + (r ? '<button class="secondary" onclick="editScan(\'' + r.id + '\')">Ouvrir</button>' : '—') + '</td></tr>';
+    return '<tr><td>' + (c === '*' ? '<span class="muted">' + escapeHtml(className(s.classId)) + '</span> ' : '') + escapeHtml(s.name) + (all.length > 1 ? ' (' + all.length + ' fiches)' : '') + '</td>' + cols.map(x => '<td>' + (m ? escapeHtml(x.get(m, r.values, x.bi)) : '—') + '</td>').join('') + '<td><span class="pill ' + ({ validated: 'ok', auto: 'auto', check: 'warn' }[st] || '') + '">' + ({ validated: 'Validé', auto: 'Lu ✓ à valider', check: 'À vérifier ⚠' }[st] || 'Non scanné') + '</span></td><td>' + (r ? '<button class="secondary" onclick="editScan(\'' + r.id + '\')">Ouvrir</button>' : '—') + '</td></tr>';
   }).join('');
   $('progress').textContent = students.length + ' élèves · ' + validated + ' validés · ' + autoOk + ' lus sans alerte · ' + pending + ' à vérifier · ' + (students.length - validated - pending - autoOk) + ' non scannés';
   $('validateAutoBtn').disabled = !autoOk;
 }
 async function validateAuto() {
   const c = $('resultClass').value, tid = $('resultTpl').value;
-  const list = state.students.filter(s => s.classId === c).map(s => latestScan(s.id, tid)).filter(r => scanState(r) === 'auto');
+  const list = resultStudents(c, tplById(tid)).map(s => latestScan(s.id, tid)).filter(r => scanState(r) === 'auto');
   if (!list.length) return;
   if (!confirm('Valider ' + list.length + ' fiche(s) lue(s) sans alerte ? Tu peux toujours les rouvrir ensuite.')) return;
   list.forEach(x => { x.status = 'validated'; }); await persist(); render();
@@ -347,12 +480,38 @@ function exportCSV() {
   const c = $('resultClass').value, t = tplById($('resultTpl').value); if (!t) return;
   const rows = t.blocks.flatMap(b => b.rows.map(r => ({ r, head: (b.title ? b.title + ' · ' : '') + r.label })));
   const lines = [['Élève', 'Statut', ...rows.map(x => x.head), 'Meilleur', 'Écart estimations (s)', 'Écart fractions (s)']];
-  for (const s of state.students.filter(s => s.classId === c).sort((a, b) => a.name.localeCompare(b.name, 'fr'))) {
+  lines[0].unshift('Classe');
+  for (const s of resultStudents(c, t)) {
     const r = latestScan(s.id, t.id), m = r ? metrics(t, r.values) : null;
-    lines.push([s.name, r ? ({ validated: 'validé', auto: 'lu, à valider', check: 'à vérifier' }[scanState(r)]) : 'non scanné', ...rows.map(x => r?.values[x.r.id] ?? ''), m ? fmt(m.best).replace('—', '') : '', m?.gap == null ? '' : round1(m.gap), m?.pace == null ? '' : round1(m.pace)]);
+    lines.push([className(s.classId), s.name, r ? ({ validated: 'validé', auto: 'lu, à valider', check: 'à vérifier' }[scanState(r)]) : 'non scanné', ...rows.map(x => r?.values[x.r.id] ?? ''), m ? fmt(m.best).replace('—', '') : '', m?.gap == null ? '' : round1(m.gap), m?.pace == null ? '' : round1(m.pace)]);
   }
   const slug = t.name.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/gi, '-').toLowerCase();
-  download('resultats-' + slug + '-' + className(c).replace(/\s+/g, '') + '.csv', '﻿' + lines.map(row => row.map(x => '"' + String(x ?? '').replace(/"/g, '""') + '"').join(';')).join('\r\n'), 'text/csv;charset=utf-8');
+  download('resultats-' + slug + '-' + (c === '*' ? 'toutes-classes' : className(c).replace(/\s+/g, '')) + '.csv', '﻿' + lines.map(row => row.map(x => '"' + String(x ?? '').replace(/"/g, '""') + '"').join(';')).join('\r\n'), 'text/csv;charset=utf-8');
+}
+
+function resultsHTML(t, cid) {
+  const students = state.students.filter(s => s.classId === cid).sort((a, b) => a.name.localeCompare(b.name, 'fr'));
+  const cols = resultColumns(t), rows = t.blocks.flatMap(b => b.rows.map(r => ({ r, head: (b.title ? b.title + ' · ' : '') + r.label })));
+  const lab = { validated: 'Validé', auto: 'Lu, à valider', check: 'À vérifier' };
+  let v = 0, rd = 0;
+  const main = students.map(s => {
+    const r = latestScan(s.id, t.id), m = r ? metrics(t, r.values) : null, st = scanState(r);
+    if (r) rd++; if (st === 'validated') v++;
+    return '<tr><td>' + escapeHtml(s.name) + '</td>' + cols.map(x => '<td>' + (m ? escapeHtml(x.get(m, r.values, x.bi)) : '—') + '</td>').join('') + '<td class="st ' + (st || 'none') + '">' + (lab[st] || 'Non scanné') + '</td></tr>';
+  }).join('');
+  const detail = students.map(s => { const r = latestScan(s.id, t.id); return '<tr><td>' + escapeHtml(s.name) + '</td>' + rows.map(x => '<td>' + escapeHtml(r?.values[x.r.id] ?? '') + '</td>').join('') + '</tr>'; }).join('');
+  return '<section><h2>' + escapeHtml(className(cid)) + '</h2><p class="sub">' + students.length + ' élèves · ' + rd + ' fiches lues · ' + v + ' validées</p>' +
+    '<table><thead><tr><th>Élève</th>' + cols.map(x => '<th>' + escapeHtml(x.head) + '</th>').join('') + '<th>État</th></tr></thead><tbody>' + main + '</tbody></table>' +
+    '<details><summary>Détail de toutes les valeurs</summary><table class="small"><thead><tr><th>Élève</th>' + rows.map(x => '<th>' + escapeHtml(x.head) + '</th>').join('') + '</tr></thead><tbody>' + detail + '</tbody></table></details></section>';
+}
+function exportHTML() {
+  const t = tplById($('resultTpl').value); if (!t) return;
+  const all = $('resultClass').value === '*', cids = all ? classesUsing(t) : [$('resultClass').value];
+  if (!cids.length) return alert('Aucune classe n’a encore utilisé cette fiche.');
+  const date = new Date().toLocaleDateString('fr-FR');
+  const css = 'body{font-family:system-ui,-apple-system,sans-serif;color:#18314c;margin:24px}h1{margin:0 0 4px;color:#123d66}h2{margin:26px 0 2px;color:#123d66}.sub{color:#5a6f85;margin:0 0 10px}table{border-collapse:collapse;width:100%;margin:6px 0 10px}th,td{border:1px solid #d5e0ea;padding:6px 8px;text-align:left;font-size:14px}th{background:#edf3fa}.small td,.small th{font-size:12px}tr:nth-child(even) td{background:#fafcfe}.st.validated{color:#16683d;font-weight:600}.st.check{color:#855500;font-weight:600}.st.auto{color:#124f8a}.st.none{color:#999}summary{cursor:pointer;color:#1267a5;margin:4px 0}@media print{details{display:none}section{break-inside:avoid-page}section+section{break-before:page}}';
+  const doc = '<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' + escapeHtml(t.name) + ' — résultats</title><style>' + css + '</style></head><body><h1>' + escapeHtml(t.name) + '</h1><p class="sub">Résultats · exporté le ' + date + ' · ScanDocument EPS</p>' + cids.map(c => resultsHTML(t, c)).join('') + '</body></html>';
+  download('resultats-' + slug(t.name) + '-' + (all ? 'toutes-classes' : slug(className(cids[0]))) + '.html', doc, 'text/html;charset=utf-8');
 }
 
 /* ---------- Sauvegarde ---------- */
