@@ -336,6 +336,97 @@ function renderBaremes() {
     '<h4>AFL2 · degré proposé d’après les écarts cumulés</h4><p>D4 si ≤ ' + inp('afl2.0', b.afl2[0], '8', 60) + ' s · D3 si ≤ ' + inp('afl2.1', b.afl2[1], '15', 60) + ' s · D2 si ≤ ' + inp('afl2.2', b.afl2[2], '25', 60) + ' s · sinon D1</p>' +
     '<p class="notice">AFL1 /' + nf(B.afl1max) + ' (performance /' + nf(B.perfMax) + (B.regMax ? ' + régularité /' + nf(B.regMax) : '') + ') · AFL2 + AFL3 /8 selon le choix de l’élève · note /' + nf(B.afl1max + 8) + '</p></div></div>';
 }
+/* ---------- Import d'un barème (protocole Word .docx ou CSV) ---------- */
+async function unzipEntry(buf, name) {
+  const dv = new DataView(buf), u8 = new Uint8Array(buf);
+  let e = buf.byteLength - 22; while (e >= 0 && dv.getUint32(e, true) !== 0x06054b50) e--;
+  if (e < 0) throw Error('fichier Word illisible');
+  let p = dv.getUint32(e + 16, true); const n = dv.getUint16(e + 10, true), dec = new TextDecoder();
+  for (let i = 0; i < n; i++) {
+    const method = dv.getUint16(p + 10, true), csize = dv.getUint32(p + 20, true), fl = dv.getUint16(p + 28, true), xl = dv.getUint16(p + 30, true), cl = dv.getUint16(p + 32, true), off = dv.getUint32(p + 42, true);
+    const fname = dec.decode(u8.subarray(p + 46, p + 46 + fl));
+    if (fname === name) {
+      const data = off + 30 + dv.getUint16(off + 26, true) + dv.getUint16(off + 28, true), raw = u8.subarray(data, data + csize);
+      if (method === 0) return dec.decode(raw);
+      if (typeof DecompressionStream === 'undefined') throw Error('cet appareil ne sait pas ouvrir les fichiers Word (mets à jour iPadOS) : utilise le modèle CSV');
+      const out = await new Response(new Blob([raw]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer();
+      return dec.decode(out);
+    }
+    p += 46 + fl + xl + cl;
+  }
+  throw Error('contenu Word introuvable');
+}
+function baremeFromRows(rows, fullText) {
+  const tm = c => { const m = String(c).trim().match(/^(\d{1,2})\s*['’′:h]\s*(\d{2})\s*(?:''|’’|")?$/); return m ? m[1] + ':' + m[2] : null; };
+  const num = c => { const m = String(c).trim().match(/^(\d{1,2}(?:[.,]\d{1,2})?)$/); return m ? parseFloat(m[1].replace(',', '.')) : null; };
+  const secs = c => { const m = String(c).trim().match(/^([<>]?)\s*(\d{1,2})\s*(''|’’|"|″|s|’|')\s*$/) || String(c).trim().match(/^([<>])\s*(\d{1,2})$/); return m ? { op: m[1], v: +m[2] } : null; };
+  const info = rows.map((r, i) => ({ i, r, times: r.map(tm).filter(Boolean), nums: r.map(num).filter(v => v != null && v <= 20), secs: r.map(secs).filter(Boolean), label: r.filter(c => !tm(c) && num(c) == null).join(' ') }));
+  const timeRows = info.filter(x => x.times.length >= 6);
+  const out = { perfRows: [], regRows: [], afl2: [8, 15, 25] };
+  if (timeRows.length) {
+    const n = timeRows[0].times.length;
+    let F = timeRows.find(x => /fille|f[ée]m/i.test(x.label)), G = timeRows.find(x => /gar[cç]|masc/i.test(x.label));
+    if (!F) F = timeRows[0]; if (!G) G = timeRows.find(x => x !== F) || F;
+    const pts = info.filter(x => !x.times.length && x.nums.length === n).sort((a, b) => Math.abs(a.i - F.i) - Math.abs(b.i - F.i))[0];
+    const P = pts ? pts.nums : Array.from({ length: n }, (_, k) => (k + 1) * (6 / n));
+    out.perfRows = P.map((pt, k) => ({ pts: String(pt).replace('.', ','), F: F.times[k] || '', G: G.times[k] || '' }));
+  }
+  const secRow = info.find(x => x.secs.length >= 5 && x.secs.length >= x.r.filter(c => String(c).trim()).length - 2);
+  if (secRow) {
+    const near = info.filter(x => x !== secRow && !x.times.length && x.nums.length === secRow.secs.length).sort((a, b) => Math.abs(a.i - secRow.i) - Math.abs(b.i - secRow.i))[0];
+    if (near) secRow.secs.forEach((sv, k) => { if (sv.op === '>') return; out.regRows.push({ max: String(sv.op === '<' ? sv.v - 0.1 : sv.v).replace('.', ','), pts: String(near.nums[k]).replace('.', ',') }); });
+  }
+  const t = (fullText || '').replace(/\s+/g, ' '), i0 = t.search(/cumul/i);
+  if (i0 >= 0) {
+    const zone = t.slice(Math.max(0, i0 - 400), i0 + 1500);
+    const lt = zone.match(/<\s*(\d{1,2})/), pairs = [...zone.matchAll(/(\d{1,2})\s*(?:et|à|-|–)\s*(\d{1,2})/g)].map(m => [+m[1], +m[2]]).filter(p => p[0] < p[1] && p[1] <= 60).sort((a, b) => a[0] - b[0]);
+    if (lt && pairs.length >= 2) out.afl2 = [+lt[1], pairs[0][1], pairs[1][1]];
+  }
+  return out;
+}
+async function importBareme(e) {
+  const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+  try {
+    let rows = [], text = '';
+    if (/\.docx$/i.test(f.name)) {
+      const xml = await unzipEntry(await f.arrayBuffer(), 'word/document.xml'), doc = new DOMParser().parseFromString(xml, 'application/xml'), W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+      const txt = el => [...el.getElementsByTagNameNS(W, 't')].map(n => n.textContent).join('');
+      for (const tr of doc.getElementsByTagNameNS(W, 'tr')) rows.push([...tr.getElementsByTagNameNS(W, 'tc')].map(txt));
+      text = [...doc.getElementsByTagNameNS(W, 'p')].map(txt).join('\n');
+    } else {
+      text = await f.text();
+      const sep = text.includes(';') ? ';' : text.includes('\t') ? '\t' : ',';
+      rows = text.replace(/^﻿/, '').split(/\r?\n/).map(l => l.split(sep).map(c => c.trim().replace(/^"|"$/g, '')));
+      // format du modèle CSV : sections Performance / Régularité / Estimation
+      let sec = null; const b = { perfRows: [], regRows: [], afl2: [8, 15, 25] }, name = (rows.find(r => /^bar[eè]me$/i.test(r[0])) || [])[1];
+      for (const r of rows) {
+        const k = (r[0] || '').toLowerCase();
+        if (/^perf/.test(k)) { sec = 'p'; continue; } if (/^r[ée]gul/.test(k)) { sec = 'r'; continue; } if (/^estim|^afl2/.test(k)) { sec = 'e'; continue; } if (/^bar[eè]me/.test(k)) continue;
+        if (sec === 'p' && r[1]) b.perfRows.push({ pts: r[1], F: r[2] || '', G: r[3] || '' });
+        if (sec === 'r' && r[1]) b.regRows.push({ max: r[1], pts: r[2] || '' });
+        if (sec === 'e' && r[1]) b.afl2 = [r[1], r[2], r[3]].map(v => parseFloat(String(v).replace(',', '.')) || 0);
+      }
+      if (b.perfRows.length) return saveImported(b, name || f.name.replace(/\.[^.]+$/, ''));
+    }
+    const b = baremeFromRows(rows, text);
+    if (!b.perfRows.length) throw Error('aucun tableau de performance (temps fille / garçon) trouvé');
+    saveImported(b, f.name.replace(/\.[^.]+$/, '').replace(/[_]+/g, ' '));
+  } catch (err) { alert('Import impossible : ' + err.message); }
+}
+async function saveImported(b, name) {
+  state.baremes = state.baremes || [];
+  const nb = { id: sid('b'), name: name || 'Barème importé', perfRows: b.perfRows, regRows: b.regRows, afl2: b.afl2 };
+  state.baremes.push(nb); barEdit = nb.id; await persist(); render();
+  alert('Barème importé : ' + nb.perfRows.length + ' paliers de performance, ' + nb.regRows.length + ' paliers de régularité, AFL2 : D4 ≤ ' + nb.afl2[0] + ' s, D3 ≤ ' + nb.afl2[1] + ' s, D2 ≤ ' + nb.afl2[2] + ' s.\nVérifie les valeurs, puis associe ce barème à une fiche.');
+  $('barEditor').scrollIntoView({ behavior: 'smooth' });
+}
+function barTemplateCSV() {
+  const B = bar('ca1-2x800'), L = ['Barème;Mon barème', 'Performance;Points;Fille (m:ss);Garçon (m:ss)'];
+  B.perf.forEach(r => L.push(';' + nf(r.pts) + ';' + fmt(r.F) + ';' + fmt(r.G)));
+  L.push('Régularité;Écart max (s);Points'); B.reg.forEach(r => L.push(';' + (r.max < 4 && r.max > 3.99 ? '3,9' : nf(r.max)) + ';' + nf(r.pts)));
+  L.push('Estimation AFL2;D4 si écart ≤ (s);D3 si ≤;D2 si ≤', ';' + B.afl2.join(';'));
+  download('modele-bareme.csv', '﻿' + L.join('\r\n'), 'text/csv;charset=utf-8');
+}
 async function newBareme(from) {
   state.baremes = state.baremes || [];
   const src = from ? bar(from) : null;
