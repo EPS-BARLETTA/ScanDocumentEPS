@@ -167,11 +167,13 @@
 
   const studentPayload = (sid, tid) => PREFIX + 'E:' + sid + ':' + tid;
   const sparePayload = (cid, tid) => PREFIX + 'S:' + cid + ':' + tid;
+  const namePayload = (name, tid) => PREFIX + 'N:' + encodeURIComponent(name) + ':' + tid;
   function parsePayload(p) {
     if (typeof p !== 'string' || !p.startsWith(PREFIX)) return null;
     const parts = p.slice(PREFIX.length).split(':');
     if (parts[0] === 'E' && parts[1]) return { kind: 'student', id: parts[1], tpl: parts[2] || null };
     if (parts[0] === 'S' && parts[1]) return { kind: 'spare', classId: parts[1], tpl: parts[2] || null };
+    if (parts[0] === 'N' && parts[1]) return { kind: 'name', name: decodeURIComponent(parts[1]), tpl: parts[2] || null };
     return null;
   }
 
@@ -403,5 +405,5 @@
     return analyse(ctx.getImageData(0, 0, cv.width, cv.height).data, cv.width, cv.height, Object.assign({}, opts, { qrZone }));
   }
 
-  root.Fiche = { FORMATS, layoutFor, ficheSVG, pagesSVG, studentPayload, sparePayload, parsePayload, analyse, read };
+  root.Fiche = { FORMATS, layoutFor, ficheSVG, pagesSVG, studentPayload, sparePayload, namePayload, parsePayload, analyse, read };
 })(typeof self !== 'undefined' ? self : globalThis);

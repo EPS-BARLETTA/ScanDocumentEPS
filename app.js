@@ -386,10 +386,13 @@ function editScan(id) {
 
 /* ---------- Scan par lot ---------- */
 function compressPhoto(file) { return new Promise((resolve, reject) => { const img = new Image(), url = typeof file === 'string' ? file : URL.createObjectURL(file); img.onload = () => { const canvas = document.createElement('canvas'), scale = Math.min(1, 1400 / img.width, 1900 / img.height); canvas.width = Math.round(img.width * scale); canvas.height = Math.round(img.height * scale); canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height); if (typeof file !== 'string') URL.revokeObjectURL(url); resolve(canvas.toDataURL('image/jpeg', .7)); }; img.onerror = () => reject(Error('Photo illisible')); img.src = url; }); }
-function readOpts() { return { templateFor: ref => tplById(ref.tpl || 't2x800'), fallback: tplById($('batchTpl').value) }; }
+function readOpts() { return { templateFor: ref => tplById(ref.tpl || 't2x800') || LIBRARY.find(l => l.id === (ref.tpl || 't2x800')), fallback: tplById($('batchTpl').value) }; }
 async function readSafe(src) { try { return await Fiche.read(src, readOpts()); } catch (err) { return { markers: false, ref: null, values: {}, tplId: null, issues: ['Lecture impossible : ' + err.message] }; } }
 function addFromRead(read, photo, classId) {
-  const st = read.ref?.kind === 'student' ? state.students.find(s => s.id === read.ref.id) : null;
+  const norm = x => String(x || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+  let st = read.ref?.kind === 'student' ? state.students.find(s => s.id === read.ref.id) : null;
+  if (read.ref?.kind === 'name') { const m = state.students.filter(s => norm(s.name) === norm(read.ref.name) || norm(s.name).split(' ')[0] === norm(read.ref.name)); if (m.length === 1) st = m[0]; else read.issues.unshift('Fiche au nom de ' + read.ref.name + ' : ' + (m.length ? 'plusieurs élèves possibles' : 'élève absent de tes classes') + ', choisis l’élève'); }
+  if (read.tplId && !tplById(read.tplId)) { const lib = LIBRARY.find(l => l.id === read.tplId); if (lib) state.templates.push(Object.assign(JSON.parse(JSON.stringify(lib)), { createdAt: today(), printedFor: [], locked: true })); }
   if (st && read.markers && read.tplId && read.tplId === (read.ref.tpl || 't2x800')) {
     const issues = [...read.issues];
     if (st.classId !== classId) issues.unshift('Fiche d’une autre classe (' + className(st.classId) + ')');
