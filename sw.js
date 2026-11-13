@@ -1,6 +1,6 @@
 // Mode hors connexion : la version en ligne est prioritaire, la copie locale sert de secours.
-const CACHE = 'scan-eps-v2';
-const FILES = ['./', './index.html', './fiche.js', './lib/qrcode.js', './lib/jsQR.js', './manifest.webmanifest'];
+const CACHE = 'scan-eps-v3';
+const FILES = ['./', './index.html', './fiche.js', './app.js', './lib/qrcode.js', './lib/jsQR.js', './manifest.webmanifest'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES)).then(() => self.skipWaiting()));
