@@ -11,7 +11,7 @@ const today = () => new Date().toISOString().slice(0, 10);
 
 /* ---------- Bibliothèque de modèles ---------- */
 const LIBRARY = [
-  { id: 't2x800', name: 'Demi-fond 2 × 800 m', format: 'auto', minutesMax: 5, cumulative: true, bareme: 'ca1-2x800',
+  { id: 't2x800', name: 'Demi-fond 2 × 800 m — CCF session 2027 (certificative)', format: 'auto', minutesMax: 5, cumulative: true, bareme: 'ca1-2x800',
     blocks: [1, 2].map(i => ({ title: (i === 1 ? '1er' : '2e') + ' 800 m', rows: [['e', 'Estimation'], ['a', '200 m'], ['b', '400 m'], ['c', '600 m'], ['d', '800 m']].map(([k, l]) => ({ id: 'c' + i + k, label: l, type: 'time' })) })) },
   { id: 't3x500', name: 'Demi-fond 3 × 500 m', format: 'auto', minutesMax: 5, cumulative: true,
     blocks: [1, 2, 3].map(i => ({ title: 'Course ' + i, rows: [['e', 'Estimation'], ['a', '250 m'], ['b', '500 m']].map(([k, l]) => ({ id: 'c' + i + k, label: l, type: 'time' })) })) }
@@ -34,30 +34,46 @@ const BAREMES = {
   }
 };
 const CHOIX = { '2-6': [2, 6], '4-4': [4, 4], '6-2': [6, 2] }; // points max AFL2 / AFL3 selon le choix de l'élève
-function perfPts(table, t) { let p = 0; table.forEach((lim, i) => { if (t <= lim + 0.001) p = (i + 1) * 0.25; }); return p; }
-function regulPts(B, e) { if (e < 4) return 6; for (let i = B.regul.length - 1; i >= 0; i--) if (e <= B.regul[i][0]) return B.regul[i][1]; return 0; }
-function afl2Pts(B, g) { for (const [lim, p] of B.afl2) if (g <= lim) return p; return 0.5; }
+/** Barème normalisé : { id, name, builtin, perf:[{pts,F,G}] (secondes), reg:[{max,pts}], afl2:[D4,D3,D2] (s), perfMax, regMax, afl1max } */
+function bar(id) {
+  if (!id) return null;
+  let b = BAREMES[id], out;
+  if (b) out = { id, name: b.name, builtin: true, perf: b.perf.F.map((f, i) => ({ pts: (i + 1) * 0.25, F: f, G: b.perf.G[i] })), reg: [...b.regul.map(([max, pts]) => ({ max, pts })), { max: 3.999, pts: 6 }], afl2: b.afl2.map(x => x[0]) };
+  else {
+    b = (state.baremes || []).find(x => x.id === id); if (!b) return null;
+    out = { id, name: b.name, builtin: false, perf: (b.perfRows || []).map(r => ({ pts: parseFloat(String(r.pts).replace(',', '.')) || 0, F: sec(r.F), G: sec(r.G) })).filter(r => r.pts), reg: (b.regRows || []).map(r => ({ max: parseFloat(String(r.max).replace(',', '.')), pts: parseFloat(String(r.pts).replace(',', '.')) || 0 })).filter(r => Number.isFinite(r.max) && r.pts), afl2: (b.afl2 || [8, 15, 25]).map(Number) };
+  }
+  out.perfMax = Math.max(0, ...out.perf.map(r => r.pts)); out.regMax = Math.max(0, ...out.reg.map(r => r.pts)); out.afl1max = out.perfMax + out.regMax;
+  return out;
+}
+const allBaremes = () => [...Object.keys(BAREMES).map(k => ({ id: k, name: BAREMES[k].name, builtin: true })), ...(state.baremes || []).map(b => ({ id: b.id, name: b.name, builtin: false }))];
+function perfPts(B, sex, t) { let p = 0; for (const r of B.perf) if (r[sex] != null && t <= r[sex] + 0.001 && r.pts > p) p = r.pts; return p; }
+function regulPts(B, e) { let p = 0; for (const r of B.reg) if (e <= r.max + 0.001 && r.pts > p) p = r.pts; return p; }
+function estDeg(B, g) { return g <= B.afl2[0] ? 4 : g <= B.afl2[1] ? 3 : g <= B.afl2[2] ? 2 : 1; }
 function grade(t, s, m) {
-  const B = BAREMES[t.bareme]; if (!B) return null;
+  const B = bar(t.bareme); if (!B) return null;
   const n = (s.notes || {})[t.id] || {}, has = v => v !== undefined && v !== null && v !== '';
   const choix = CHOIX[n.choix] ? n.choix : null, [max2, max3] = choix ? CHOIX[choix] : [null, null];
-  const perf = m && m.best != null && B.perf[s.sex] ? perfPts(B.perf[s.sex], m.best) : null;
-  const reg = m && m.pace != null ? regulPts(B, m.pace) : null;
-  const afl1 = perf != null && reg != null ? perf + reg : null;
-  const dEst = m && m.gap != null ? Math.round(afl2Pts(B, m.gap) * 2) : null;                     // AFL2 · estimer (temps) : degré 1-4
+  const sexOk = s.sex === 'F' || s.sex === 'G', hasReg = B.reg.length > 0;
+  const perf = m && m.best != null && sexOk ? perfPts(B, s.sex, m.best) : null;
+  const reg = hasReg && m && m.pace != null ? regulPts(B, m.pace) : null;
+  const afl1 = perf != null && (reg != null || !hasReg) ? perf + (reg || 0) : null;
+  const dEst = m && m.gap != null ? estDeg(B, m.gap) : null;                     // AFL2 · estimer (temps) : degré 1-4
   const d2 = has(n.d2) ? +n.d2 : dEst, d2auto = !has(n.d2) && dEst != null;                       // AFL2 : un seul degré, proposé d'après les écarts cumulés
   const d3 = has(n.d3) ? +n.d3 : has(n.afl3) ? Math.round(n.afl3 * 2) : null;                    // AFL3 · rôle : degré 1-4 (prof)
   const p2 = max2 && d2 != null ? d2 * max2 / 4 : null;
   const p3 = max3 && d3 != null ? d3 * max3 / 4 : null;
   const total = afl1 != null && p2 != null && p3 != null ? afl1 + p2 + p3 : null;
   const acquired = [afl1, p2, p3].reduce((a, v) => a + (v || 0), 0);
+  if (n.disp) return { disp: true, B, choix, max2, max3, role: '', missing: [], acquired: 0, total: null, best: m?.best, pace: m?.pace, gap: m?.gap };
   const missing = [!s.sex && 'F/G', !m && 'fiche', !choix && 'choix', d2 == null && 'AFL2', d3 == null && 'AFL3'].filter(Boolean);
-  return { perf, reg, afl1, dEst, d2, d2auto, d3, p2, p3, max2, max3, role: n.role || '', choix, total, acquired, missing, noSex: !B.perf[s.sex], best: m?.best, pace: m?.pace, gap: m?.gap };
+  return { perf, reg, afl1, dEst, d2, d2auto, d3, p2, p3, max2, max3, role: n.role || '', choix, total, acquired, missing, noSex: !sexOk, B, hasReg, best: m?.best, pace: m?.pace, gap: m?.gap };
 }
 const nf = v => v == null ? '—' : String(Math.round(v * 100) / 100).replace('.', ',');
 async function setNote(sid, tid, k, v) {
   const s = state.students.find(x => x.id === sid); if (!s) return;
   if (k === 'sex') s.sex = s.sex === v ? undefined : (v || undefined);
+  else if (k === 'disp') { s.notes = s.notes || {}; s.notes[tid] = s.notes[tid] || {}; s.notes[tid].disp = !s.notes[tid].disp; }
   else { s.notes = s.notes || {}; s.notes[tid] = s.notes[tid] || {}; const cur = s.notes[tid][k]; s.notes[tid][k] = String(cur) === String(v) ? '' : v; if (k === 'd2tr') delete s.notes[tid].afl2tr; if (k === 'd3') delete s.notes[tid].afl3; }
   await persist(); renderResults();
 }
@@ -79,7 +95,8 @@ function migrate() {
   state.templates = state.templates.filter(t => !(t.id !== 'lib' && !LIBRARY.some(l => l.id === t.id) && LIBRARY.some(l => sameAs(t, l) && t.name.startsWith(l.name)) && !(t.printedFor || []).length && !state.scans.some(x => x.templateId === t.id) && !state.queue.some(q => q.tplId === t.id)));
   for (const lib of LIBRARY) if (!tplById(lib.id) && (!state.removedLib.includes(lib.id) || state.scans.some(s => s.races || s.templateId === lib.id))) state.templates.push(Object.assign(JSON.parse(JSON.stringify(lib)), { createdAt: today() }));
   for (const c of state.classes) c.folder = c.folder || schoolYear();
-  for (const t of state.templates) { t.printedFor = t.printedFor || []; t.createdAt = t.createdAt || today(); if (t.id === 't2x800' && !('bareme' in t)) t.bareme = 'ca1-2x800'; }
+  for (const t of state.templates) { t.printedFor = t.printedFor || []; t.createdAt = t.createdAt || today(); if (t.id === 't2x800' && !('bareme' in t)) t.bareme = 'ca1-2x800'; if (t.id === 't2x800' && t.name === 'Demi-fond 2 × 800 m') t.name = LIBRARY[0].name; }
+  state.baremes = state.baremes || [];
   for (const s of state.scans) {
     if (s.races && !s.values) {
       s.templateId = 't2x800'; s.values = {};
@@ -115,7 +132,7 @@ function render() {
   const previous = $('scanStudent').value;
   $('scanStudent').innerHTML = '<option value="">— Élève non identifié —</option>' + state.students.filter(s => s.classId === $('scanClass').value).sort((a, b) => a.name.localeCompare(b.name, 'fr')).map(s => '<option value="' + s.id + '">' + escapeHtml(s.name) + '</option>').join('');
   $('scanStudent').value = state.students.some(s => s.id === previous && s.classId === $('scanClass').value) ? previous : '';
-  renderResults(); renderBatch(); renderLibrary(); renderEditor(); renderClassEvals(); calculate();
+  renderResults(); renderBatch(); renderLibrary(); renderEditor(); renderClassEvals(); renderBaremes(); calculate();
 }
 
 /* ---------- Répertoire des classes ---------- */
@@ -150,7 +167,7 @@ function renderClassEvals() {
   const studs = state.students.filter(s => s.classId === c);
   const items = state.templates.filter(t => (t.printedFor || []).some(p => p.classId === c) || state.scans.some(x => x.classId === c && x.templateId === t.id));
   box.innerHTML = items.length ? items.map(t => {
-    const pr = (t.printedFor || []).find(p => p.classId === c), lat = studs.map(s => latestScan(s.id, t.id)).filter(Boolean), B = BAREMES[t.bareme];
+    const pr = (t.printedFor || []).find(p => p.classId === c), lat = studs.map(s => latestScan(s.id, t.id)).filter(Boolean), B = bar(t.bareme);
     const notes = B ? studs.filter(s => grade(t, s, (r => r ? metrics(t, r.values) : null)(latestScan(s.id, t.id))).total != null).length : null;
     return '<div class="card"><h4>' + escapeHtml(t.name) + '</h4><div class="muted">' + (pr ? 'Fiches imprimées le ' + new Date(pr.date).toLocaleDateString('fr-FR') + '<br>' : '') + lat.length + ' / ' + studs.length + ' fiche(s) scannée(s) · ' + lat.filter(r => r.status === 'validated').length + ' validée(s)' + (notes != null ? '<br>' + notes + ' / ' + studs.length + ' note(s) complète(s)' : '') + '</div>' +
       '<div class="acts"><button onclick="goResults(\'' + t.id + '\',\'' + c + '\')">📊 Résultats</button><button class="secondary" onclick="exportHTML(\'' + t.id + '\',\'' + c + '\')">📄 Archive</button>' + (B ? '<button class="secondary" onclick="exportSantorin(\'' + t.id + '\',\'' + c + '\')">🎓 Santorin</button>' : '') + '</div></div>';
@@ -255,7 +272,7 @@ function renderEditor() {
   h += '<div><label>Minutes</label><select onchange="tplSet(\'minutesMax\',+this.value)"' + dis + '><option value="5"' + (t.minutesMax !== 9 ? ' selected' : '') + '>0 à 5</option><option value="9"' + (t.minutesMax === 9 ? ' selected' : '') + '>0 à 9</option></select></div>';
   h += '<div><label>QR code</label><select onchange="tplSet(\'qrColor\',this.value)"' + dis + '><option value="#000"' + (t.qrColor !== '#1a4f9c' ? ' selected' : '') + '>Noir</option><option value="#1a4f9c"' + (t.qrColor === '#1a4f9c' ? ' selected' : '') + '>Bleu</option></select></div>';
   h += '<div><label>Temps de passage</label><select onchange="tplSet(\'cumulative\',this.value===\'1\')"' + dis + '><option value="1"' + (t.cumulative !== false ? ' selected' : '') + '>cumulés (chrono qui tourne)</option><option value="0"' + (t.cumulative === false ? ' selected' : '') + '>par fraction</option></select></div></div>';
-  h += '<label>Barème (note)</label><select onchange="tplBareme(this.value)"><option value="">Aucun</option>' + Object.entries(BAREMES).map(([k, b]) => '<option value="' + k + '"' + (t.bareme === k ? ' selected' : '') + '>' + escapeHtml(b.name) + '</option>').join('') + '</select>';
+  h += '<label>Barème (note)</label><select onchange="tplBareme(this.value)"><option value="">Aucun</option>' + allBaremes().map(b => '<option value="' + b.id + '"' + (t.bareme === b.id ? ' selected' : '') + '>' + escapeHtml(b.name) + '</option>').join('') + '</select> <button class="mini" onclick="openBaremes()">Gérer les barèmes</button>';
   h += '<p class="muted">Une ligne de temps nommée « Estimation » sert au calcul de l’écart estimation/réalisation. Le dernier temps d’un bloc est son temps final.</p>';
   t.blocks.forEach((b, bi) => {
     h += '<div class="block"><div class="flex"><input class="grow" value="' + escapeHtml(b.title) + '" placeholder="Titre du bloc (ex. Course 1)" onchange="blockSet(' + bi + ',this.value)"' + dis + '>';
@@ -297,6 +314,37 @@ async function newTpl() { const t = { id: sid('t'), name: 'Nouvelle fiche', crea
 async function dupTpl() { const s = curTpl(); if (!s) return; const t = JSON.parse(JSON.stringify(s)); t.id = sid('t'); t.name = s.name + ' (copie)'; t.locked = false; t.printedFor = []; t.createdAt = today(); t.blocks.forEach(b => b.rows.forEach(r => { r.id = sid('r'); })); state.templates.push(t); await persist(); editTpl(t.id); }
 async function delTpl() { const t = curTpl(); if (!t) return; if (tplUsed(t)) return alert('Des fiches lues utilisent ce modèle : suppression impossible.'); if (!confirm('Supprimer la fiche « ' + t.name + ' » ?' + (t.locked ? ' Les fiches déjà imprimées ne pourront plus être lues.' : ''))) return; state.templates = state.templates.filter(x => x.id !== t.id); if (LIBRARY.some(l => l.id === t.id)) state.removedLib.push(t.id); editorTpl = null; editorOpen = false; await persist(); render(); }
 async function unlockTpl() { const t = curTpl(); if (!t) return; if (!confirm('Si tu modifies cette fiche, les exemplaires déjà imprimés ne seront plus lus correctement. Déverrouiller ?')) return; t.locked = false; await persist(); render(); }
+
+/* ---------- Barèmes personnalisés ---------- */
+let barEdit = null;
+function openBaremes() { view('models'); $('barSection').scrollIntoView({ behavior: 'smooth' }); }
+function renderBaremes() {
+  if (!$('barList')) return;
+  state.baremes = state.baremes || [];
+  $('barList').innerHTML = allBaremes().map(b => '<div class="card"><h4>' + escapeHtml(b.name) + (b.builtin ? ' 🔒' : '') + '</h4><div class="muted">' + (b.builtin ? 'Barème officiel intégré (non modifiable)' : 'Barème personnel') + ' · AFL1 /' + nf(bar(b.id).afl1max) + '</div><div class="acts">' + (b.builtin ? '<button class="secondary" onclick="newBareme(\'' + b.id + '\')">Copier pour l’adapter</button>' : '<button class="secondary" onclick="barEdit=\'' + b.id + '\';renderBaremes()">Modifier</button>') + '</div></div>').join('');
+  const b = (state.baremes || []).find(x => x.id === barEdit), box = $('barEditor');
+  box.classList.toggle('hidden', !b); if (!b) return;
+  const inp = (path, v, ph, w) => '<input style="width:' + (w || 90) + 'px;padding:8px" value="' + escapeHtml(v ?? '') + '" placeholder="' + (ph || '') + '" onchange="barSet(\'' + path + '\',this.value)">';
+  const B = bar(b.id);
+  box.innerHTML = '<div class="flex"><h3 class="grow" style="margin:0">Barème : ' + inp('name', b.name, 'Nom du barème', 320) + '</h3><button class="mini" onclick="delBareme()">Supprimer</button><button onclick="barEdit=null;renderBaremes()">✓ Terminé</button></div>' +
+    '<div class="grid2" style="margin-top:10px"><div><h4>AFL1 · Performance (meilleur temps)</h4><p class="muted">Pour chaque palier : les points obtenus si le temps est inférieur ou égal (format m:ss).</p><table class="gt" style="min-width:0"><thead><tr><th>Points</th><th>Fille ≤</th><th>Garçon ≤</th><th></th></tr></thead><tbody>' +
+    b.perfRows.map((r, i) => '<tr><td>' + inp('perfRows.' + i + '.pts', r.pts, '1', 70) + '</td><td>' + inp('perfRows.' + i + '.F', r.F, '4:30') + '</td><td>' + inp('perfRows.' + i + '.G', r.G, '3:40') + '</td><td><button class="mini" onclick="barRow(\'perfRows\',' + i + ')">✕</button></td></tr>').join('') +
+    '</tbody></table><button class="mini" onclick="barRow(\'perfRows\')">+ Palier</button></div>' +
+    '<div><h4>AFL1 · Régularité (écart entre fractions)</h4><p class="muted">Points obtenus si l’écart entre la fraction la plus rapide et la plus lente est inférieur ou égal. Vide = pas de note de régularité.</p><table class="gt" style="min-width:0"><thead><tr><th>Écart ≤ (s)</th><th>Points</th><th></th></tr></thead><tbody>' +
+    b.regRows.map((r, i) => '<tr><td>' + inp('regRows.' + i + '.max', r.max, '10', 70) + '</td><td>' + inp('regRows.' + i + '.pts', r.pts, '3', 70) + '</td><td><button class="mini" onclick="barRow(\'regRows\',' + i + ')">✕</button></td></tr>').join('') +
+    '</tbody></table><button class="mini" onclick="barRow(\'regRows\')">+ Palier</button>' +
+    '<h4>AFL2 · degré proposé d’après les écarts cumulés</h4><p>D4 si ≤ ' + inp('afl2.0', b.afl2[0], '8', 60) + ' s · D3 si ≤ ' + inp('afl2.1', b.afl2[1], '15', 60) + ' s · D2 si ≤ ' + inp('afl2.2', b.afl2[2], '25', 60) + ' s · sinon D1</p>' +
+    '<p class="notice">AFL1 /' + nf(B.afl1max) + ' (performance /' + nf(B.perfMax) + (B.regMax ? ' + régularité /' + nf(B.regMax) : '') + ') · AFL2 + AFL3 /8 selon le choix de l’élève · note /' + nf(B.afl1max + 8) + '</p></div></div>';
+}
+async function newBareme(from) {
+  state.baremes = state.baremes || [];
+  const src = from ? bar(from) : null;
+  const b = { id: sid('b'), name: src ? src.name + ' (copie)' : 'Mon barème', perfRows: src ? src.perf.map(r => ({ pts: String(r.pts), F: r.F != null ? fmt(r.F) : '', G: r.G != null ? fmt(r.G) : '' })) : [{ pts: '1', F: '', G: '' }], regRows: src ? src.reg.map(r => ({ max: String(r.max < 4 && r.max > 3.99 ? 3.9 : r.max), pts: String(r.pts) })) : [], afl2: src ? src.afl2.slice() : [8, 15, 25] };
+  state.baremes.push(b); barEdit = b.id; await persist(); render(); $('barEditor').scrollIntoView({ behavior: 'smooth' });
+}
+async function barSet(path, v) { const b = state.baremes.find(x => x.id === barEdit); if (!b) return; const k = path.split('.'); let o = b; for (let i = 0; i < k.length - 1; i++) o = o[k[i]]; o[k[k.length - 1]] = k[0] === 'afl2' ? (parseFloat(v) || 0) : v.trim(); await persist(); render(); }
+async function barRow(list, i) { const b = state.baremes.find(x => x.id === barEdit); if (!b) return; if (i == null) b[list].push(list === 'perfRows' ? { pts: '', F: '', G: '' } : { max: '', pts: '' }); else b[list].splice(i, 1); await persist(); render(); }
+async function delBareme() { const b = state.baremes.find(x => x.id === barEdit); if (!b) return; if (state.templates.some(t => t.bareme === b.id)) return alert('Ce barème est utilisé par une fiche : choisis d’abord un autre barème pour cette fiche.'); if (!confirm('Supprimer ce barème ?')) return; state.baremes = state.baremes.filter(x => x.id !== b.id); barEdit = null; await persist(); render(); }
 
 /* ---------- Évaluation : impression et dossier ---------- */
 let evCtx = {};
@@ -500,26 +548,37 @@ function addFromRead(read, photo, classId) {
   state.queue.push({ id: uid(), classId, photo, studentId: null, read, tplId: read.tplId });
   return false;
 }
+function renderBatchProgress() {
+  const box = $('batchProgress'); if (!box) return;
+  const c = $('batchClass').value; if (!c) { box.innerHTML = ''; return; }
+  const studs = state.students.filter(s => s.classId === c);
+  const tpls = state.templates.filter(t => (t.printedFor || []).some(p => p.classId === c) || state.scans.some(x => x.classId === c && x.templateId === t.id));
+  box.innerHTML = tpls.map(t => {
+    const disp = studs.filter(s => ((s.notes || {})[t.id] || {}).disp).length, total = studs.length - disp, done = studs.filter(s => !((s.notes || {})[t.id] || {}).disp && latestScan(s.id, t.id)).length, pct = total ? Math.round(done / total * 100) : 0;
+    return '<div class="prog"><div class="flex"><b class="grow">' + escapeHtml(t.name) + '</b><span><b>' + done + '</b> / ' + total + ' scannée(s)' + (disp ? ' · ' + disp + ' dispensé(s)' : '') + '</span></div><div class="bar"><span style="width:' + pct + '%"></span></div>' + (done < total ? '<span class="muted">Manquent : ' + studs.filter(s => !((s.notes || {})[t.id] || {}).disp && !latestScan(s.id, t.id)).map(s => escapeHtml(s.name)).join(', ') + '</span>' : '<span style="color:#16683d;font-weight:700">✓ Classe complète</span>') + '</div>';
+  }).join('') || '<p class="muted">Aucune évaluation imprimée pour cette classe.</p>';
+}
 async function captureBatch(e) {
   const files = [...e.target.files], classId = $('batchClass').value; e.target.value = '';
   if (!classId) return alert('Crée une classe');
-  let auto = 0, manual = 0; batchBusy = true;
+  let auto = 0, manual = 0, lastClass = null; const byTpl = {}; batchBusy = true;
   try {
     for (const [i, file] of files.entries()) {
       $('batchCount').textContent = 'Lecture de la fiche ' + (i + 1) + ' / ' + files.length + '…';
       const read = await readSafe(file), photo = await compressPhoto(file);
-      if (addFromRead(read, photo, classId)) auto++; else manual++;
+      if (addFromRead(read, photo, classId)) { auto++; const tn = tplById(read.tplId)?.name || '?'; byTpl[tn] = (byTpl[tn] || 0) + 1; const st = state.students.find(x => x.id === read.ref?.id) || state.students.find(x => read.ref?.kind === 'name' && x.name.toLowerCase().startsWith(read.ref.name.toLowerCase())); if (st) lastClass = st.classId; } else manual++;
       await persist(); renderBatch();
     }
   } catch (err) { alert('Enregistrement impossible : ' + err.message); }
-  batchBusy = false; render();
-  $('batchCount').textContent = [auto ? '✓ ' + auto + ' fiche(s) lue(s) et rangée(s) dans les Résultats' : '', manual ? manual + ' fiche(s) à vérifier ci-dessous' : ''].filter(Boolean).join(' · ') + '.';
+  batchBusy = false; if (lastClass) $('batchClass').value = lastClass; render();
+  $('batchCount').textContent = [Object.keys(byTpl).length ? 'Reconnu : ' + Object.entries(byTpl).map(([n, k]) => k + ' × ' + n + (bar(state.templates.find(t => t.name === n)?.bareme) ? ' (barème : ' + bar(state.templates.find(t => t.name === n).bareme).name + ')' : '')).join(' · ') : '', auto ? '✓ ' + auto + ' fiche(s) lue(s) et rangée(s) dans les Résultats' : '', manual ? manual + ' fiche(s) à vérifier ci-dessous' : ''].filter(Boolean).join(' · ') + '.';
 }
 function valuesSummary(tid, values) { const t = tplById(tid) || LIBRARY.find(l => l.id === tid); if (!t) return Object.values(values).join(' · '); return t.blocks.map(b => (b.title ? b.title + ' : ' : '') + b.rows.map(r => values[r.id] ?? '—').join(' / ')).join(' · '); }
 async function rereadBatch(id) { const q = state.queue.find(x => x.id === id); if (!q) return; const read = await readSafe(q.photo); state.queue = state.queue.filter(x => x.id !== id); const ok = addFromRead(read, q.photo, q.classId); await persist(); render(); $('batchCount').textContent = ok ? 'Fiche relue et rangée dans les résultats' : 'Fiche toujours à traiter : ' + read.issues.join(' · '); }
 async function deleteBatch(id) { if (!confirm('Supprimer cette photo ?')) return; state.queue = state.queue.filter(x => x.id !== id); await persist(); renderBatch(); }
 function renderBatch() {
   if (!$('batchClass')) return;
+  renderBatchProgress();
   const c = $('batchClass').value, items = state.queue.filter(x => x.classId === c);
   if (!batchBusy) $('batchCount').textContent = items.length ? items.length + ' fiche(s) à vérifier ci-dessous.' : 'Les fiches reconnues vont directement dans les Résultats.';
   $('batchGallery').innerHTML = items.map(x => '<div class="rowcard"><img class="preview" style="width:100%;max-height:260px" src="' + x.photo + '"><p class="muted">' + escapeHtml(x.read?.issues?.length ? x.read.issues.join(' · ') : 'Lecture non effectuée') + '</p>' + (x.read && Object.keys(x.read.values || {}).length ? '<p><b>Valeurs lues :</b> ' + escapeHtml(valuesSummary(x.read.tplId, x.read.values)) + '</p>' : '') + '<button onclick="reviewBatch(\'' + x.id + '\')">Vérifier / associer</button> <button class="secondary" onclick="rereadBatch(\'' + x.id + '\')">Relire</button> <button class="secondary" onclick="deleteBatch(\'' + x.id + '\')">Supprimer</button></div>').join('');
@@ -560,10 +619,10 @@ function renderResults() {
   if (!t) { $('resultHead').innerHTML = ''; $('resultRows').innerHTML = ''; $('progress').textContent = 'Ajoute d’abord une fiche depuis la Bibliothèque.'; return; }
   const students = resultStudents(c, t);
   const cols = resultColumns(t); let validated = 0, pending = 0, autoOk = 0;
-  const B = BAREMES[t.bareme];
+  const B = bar(t.bareme);
   $('santorinBtn').classList.toggle('hidden', !B);
   $('resultsTable').classList.toggle('gt', !!B);
-  if (B) $('resultHead').innerHTML = gradeHead(true);
+  if (B) $('resultHead').innerHTML = gradeHead(B, true);
   else $('resultHead').innerHTML = '<tr><th>Élève</th>' + cols.map(x => '<th>' + escapeHtml(x.head) + '</th>').join('') + '<th>État</th><th>Action</th></tr>';
   $('resultRows').innerHTML = students.map(s => {
     const all = state.scans.filter(x => x.studentId === s.id && x.templateId === t.id), r = latestScan(s.id, t.id), m = r ? metrics(t, r.values) : null, st = scanState(r);
@@ -571,15 +630,16 @@ function renderResults() {
     if (B) return gradeRow(t, s, r, m, st, true, c === '*');
     return '<tr><td>' + (c === '*' ? '<span class="muted">' + escapeHtml(className(s.classId)) + '</span> ' : '') + escapeHtml(s.name) + (all.length > 1 ? ' (' + all.length + ' fiches)' : '') + '</td>' + cols.map(x => '<td>' + (m ? escapeHtml(x.get(m, r.values, x.bi)) : '—') + '</td>').join('') + '<td><span class="pill ' + ({ validated: 'ok', auto: 'auto', check: 'warn' }[st] || '') + '">' + ({ validated: 'Validé', auto: 'Lu ✓ à valider', check: 'À vérifier ⚠' }[st] || 'Non scanné') + '</span></td><td>' + (r ? '<button class="secondary" onclick="editScan(\'' + r.id + '\')">Ouvrir</button>' : '—') + '</td></tr>';
   }).join('');
-  $('progress').textContent = students.length + ' élèves · ' + validated + ' validés · ' + autoOk + ' lus sans alerte · ' + pending + ' à vérifier · ' + (students.length - validated - pending - autoOk) + ' non scannés';
+  const nd = B ? students.filter(s => ((s.notes || {})[t.id] || {}).disp).length : 0, ndNo = B ? students.filter(s => ((s.notes || {})[t.id] || {}).disp && !latestScan(s.id, t.id)).length : 0;
+  $('progress').textContent = (nd ? nd + ' dispensé(s) · ' : '') + students.length + ' élèves · ' + validated + ' validés · ' + autoOk + ' lus sans alerte · ' + pending + ' à vérifier · ' + (students.length - validated - pending - autoOk - ndNo) + ' non scannés';
   $('validateAutoBtn').disabled = !autoOk;
 }
 const GRADE_CSS = '.gt tr.nosex td:not(.nm):not(.fg){opacity:.35;pointer-events:none}.gt tr.nosex td.fg{background:#fde8eb}.gt tr.nosex td.nm::after{content:"Choisir F ou G pour noter";display:block;color:#b83246;font-size:12px;font-weight:700}.gt td.nm{position:sticky;left:0;z-index:1;background:#fff}.gt{border-collapse:collapse;width:100%;min-width:980px}.gt th,.gt td{border:1px solid #d5e0ea;padding:6px 7px;text-align:center;vertical-align:middle;font-size:14px}.gt td.nm{text-align:left;min-width:150px}.gt th{background:#edf3fa}.gt .a1{background:#e6f3fc}.gt .a2{background:#edf6e4}.gt .a3{background:#fff8d6}.gt th.a1{background:#8cc8ef}.gt th.a2{background:#a9cf86}.gt th.a3{background:#f3dd5e}.gt th.a1s{background:#cfe8f9}.gt th.a2s{background:#d6eac4}.gt th.a3s{background:#faeea6}.gt .sub{font-size:11px;color:#5a6f85;display:block;margin-top:2px}.gt .big{font-size:18px;font-weight:800}.gt .of{font-size:12px;color:#5a6f85}.gt .note{font-size:22px;font-weight:900;color:#123d66}.seg{display:inline-flex;border:1px solid #9fb6cf;border-radius:9px;overflow:hidden;background:#fff}.seg button{background:#fff;color:#18314c;border:0;border-left:1px solid #d5e0ea;padding:10px 12px;border-radius:0;font-size:17px;font-weight:600;line-height:1.1;min-height:48px;min-width:48px}.seg button:first-child{border-left:0}.seg button{white-space:nowrap}.seg button.on{background:#123d66;color:#fff}.seg button small{display:block;font-size:11px;font-weight:400;opacity:.75}.deg{display:inline-block;background:#123d66;color:#fff;border-radius:6px;padding:2px 6px;font-weight:700}.miss{font-size:11px;color:#b83246;display:block}';
 (() => { const st = document.createElement('style'); st.textContent = GRADE_CSS; document.head.appendChild(st); })();
 const ROLE = { P: 'Partenaire', S: 'Starter / chrono' };
-function gradeHead(screen) {
-  return '<tr><th rowspan="2">Élève</th><th rowspan="2">F/G</th><th rowspan="2">Choix<br>AFL2-AFL3</th><th colspan="3" class="a1">AFL1 · Produire une performance /12</th><th colspan="3" class="a2">AFL2 · S’entraîner</th><th colspan="3" class="a3">AFL3 · Assumer un rôle</th><th rowspan="2">Note<br>/20</th></tr>' +
-    '<tr><th class="a1s">Performance /6<span class="sub">meilleur 800 m</span></th><th class="a1s">Régularité /6<span class="sub">écart des 200 m</span></th><th class="a1s">AFL1</th>' +
+function gradeHead(B, screen) {
+  return '<tr><th rowspan="2">Élève</th><th rowspan="2">F/G</th><th rowspan="2">Choix<br>AFL2-AFL3</th><th colspan="3" class="a1">AFL1 · Produire une performance /' + nf(B.afl1max) + '</th><th colspan="3" class="a2">AFL2 · S’entraîner</th><th colspan="3" class="a3">AFL3 · Assumer un rôle</th><th rowspan="2">Note<br>/' + nf(B.afl1max + 8) + '</th></tr>' +
+    '<tr><th class="a1s">Performance /' + nf(B.perfMax) + '<span class="sub">meilleur temps</span></th><th class="a1s">Régularité' + (B.regMax ? ' /' + nf(B.regMax) : '') + '<span class="sub">écart des fractions</span></th><th class="a1s">AFL1</th>' +
     '<th class="a2s">Écarts cumulés<span class="sub">estimation / réalisé</span></th><th class="a2s">Degré<span class="sub">proposé d’après les temps</span></th><th class="a2s">AFL2</th>' +
     '<th class="a3s">Rôle</th><th class="a3s">Degré<span class="sub">1 à 4</span></th><th class="a3s">AFL3</th></tr>';
 }
@@ -589,15 +649,17 @@ function gradeRow(t, s, r, m, st, screen, showClass) {
   const degTxt = (d, max) => d == null ? '—' : '<span class="deg">D' + d + '</span>' + (max ? ' ' + nf(d * max / 4) : '');
   const lab = { validated: 'Validé', auto: 'Lu, à valider', check: 'À vérifier' }, pill = { validated: 'ok', auto: 'auto', check: 'warn' };
   const finals = m ? m.blocks.filter(b => b.hasTime).map(b => fmt(b.final)).join(' · ') : '';
-  const name = '<td class="nm"><b>' + escapeHtml(s.name) + '</b>' + (showClass ? ' <span class="of">' + escapeHtml(className(s.classId)) + '</span>' : '') + '<span class="sub">' + (finals ? '800 m : ' + finals : 'non scanné') + '</span>' +
-    (screen ? '<span class="sub"><span class="pill ' + (pill[st] || '') + '">' + (lab[st] || 'Non scanné') + '</span>' + (r ? ' <button class="mini" onclick="editScan(\'' + r.id + '\')">Ouvrir</button>' : '') + '</span>' : '') + '</td>';
+  const dispBtn = screen ? ' <button class="mini' + (g.disp ? ' on' : '') + '" style="' + (g.disp ? 'background:#6b7a8c;color:#fff' : '') + '" onclick="setNote(\'' + s.id + '\',\'' + t.id + '\',\'disp\',1)">' + (g.disp ? 'Dispensé ✓' : 'Dispensé ?') + '</button>' : '';
+  const name = '<td class="nm"><b>' + escapeHtml(s.name) + '</b>' + (showClass ? ' <span class="of">' + escapeHtml(className(s.classId)) + '</span>' : '') + '<span class="sub">' + (finals ? 'Temps : ' + finals : 'non scanné') + '</span>' +
+    (screen ? '<span class="sub"><span class="pill ' + (pill[st] || '') + '">' + (lab[st] || 'Non scanné') + '</span>' + (r ? ' <button class="mini" onclick="editScan(\'' + r.id + '\')">Ouvrir</button>' : '') + dispBtn + '</span>' : '') + '</td>';
+  if (g.disp) return '<tr class="disp"' + '>' + name + '<td colspan="12" style="background:#eef1f5;color:#5a6f85;font-size:18px;font-weight:700">Dispensé(e)</td></tr>';
   const tot = (v, max) => '<span class="big">' + nf(v) + '</span>' + (max ? '<span class="of"> /' + max + '</span>' : '');
   return '<tr' + (screen && !s.sex ? ' class="nosex"' : '') + '>' + name +
     '<td class="fg">' + (screen ? seg('sex', [['F', 'F'], ['G', 'G']], s.sex) : (s.sex || '?')) + '</td>' +
     '<td>' + (screen ? seg('choix', Object.keys(CHOIX).map(k => [k, k]), g.choix) : (g.choix || '—')) + '</td>' +
     '<td class="a1">' + (g.noSex && m ? '<span class="miss">F/G ?</span>' : '<b>' + nf(g.perf) + '</b>') + '<span class="sub">' + (g.best != null ? fmt(g.best) : '') + '</span></td>' +
-    '<td class="a1"><b>' + nf(g.reg) + '</b><span class="sub">' + (g.pace != null ? round1(g.pace) + ' s' : '') + '</span></td>' +
-    '<td class="a1">' + tot(g.afl1, 12) + '</td>' +
+    '<td class="a1"><b>' + (g.hasReg ? nf(g.reg) : '<span class="of">sans</span>') + '</b><span class="sub">' + (g.pace != null ? round1(g.pace) + ' s' : '') + '</span></td>' +
+    '<td class="a1">' + tot(g.afl1, nf(g.B.afl1max)) + '</td>' +
     '<td class="a2"><b>' + (g.gap != null ? round1(g.gap) + ' s' : '—') + '</b>' + (g.dEst != null ? '<span class="sub">→ degré ' + g.dEst + '</span>' : '') + '</td>' +
     '<td class="a2">' + (screen ? degBtns('d2', g.d2, g.max2) : degTxt(g.d2, g.max2)) + (g.d2auto ? '<span class="sub">proposé (temps)</span>' : '') + '</td>' +
     '<td class="a2">' + tot(g.p2, g.max2) + '</td>' +
@@ -618,12 +680,12 @@ function download(name, text, type) { const a = document.createElement('a'), url
 function exportCSV() {
   const c = $('resultClass').value, t = tplById($('resultTpl').value); if (!t) return;
   const rows = t.blocks.flatMap(b => b.rows.map(r => ({ r, head: (b.title ? b.title + ' · ' : '') + r.label })));
-  const B = BAREMES[t.bareme];
-  const lines = [['Élève', 'Statut', ...rows.map(x => x.head), 'Meilleur', 'Écart estimations (s)', 'Écart 200 m (s)', ...(B ? ['Sexe', 'AFL1 Performance /6', 'AFL1 Régularité /6', 'AFL1 /12', 'Choix AFL2-AFL3', 'Écarts cumulés (s)', 'AFL2 degré', 'AFL2 points', 'AFL3 Rôle', 'AFL3 (degré)', 'AFL3 points', 'Note /20'] : [])]];
+  const B = bar(t.bareme);
+  const lines = [['Élève', 'Statut', ...rows.map(x => x.head), 'Meilleur', 'Écart estimations (s)', 'Écart 200 m (s)', ...(B ? ['Sexe', 'AFL1 Performance', 'AFL1 Régularité', 'AFL1', 'Choix AFL2-AFL3', 'Écarts cumulés (s)', 'AFL2 degré', 'AFL2 points', 'AFL3 Rôle', 'AFL3 (degré)', 'AFL3 points', 'Note /20'] : [])]];
   lines[0].unshift('Classe');
   for (const s of resultStudents(c, t)) {
     const r = latestScan(s.id, t.id), m = r ? metrics(t, r.values) : null;
-    lines.push([className(s.classId), s.name, r ? ({ validated: 'validé', auto: 'lu, à valider', check: 'à vérifier' }[scanState(r)]) : 'non scanné', ...rows.map(x => r?.values[x.r.id] ?? ''), m ? fmt(m.best).replace('—', '') : '', m?.gap == null ? '' : round1(m.gap), m?.pace == null ? '' : round1(m.pace), ...(B ? (g => [s.sex || '', g.perf ?? '', g.reg ?? '', g.afl1 ?? '', g.choix || '', g.gap != null ? round1(g.gap) : '', g.d2 ?? '', g.p2 ?? '', ROLE[g.role] || '', g.d3 ?? '', g.p3 ?? '', g.total ?? ''])(grade(t, s, m)) : [])]);
+    lines.push([className(s.classId), s.name, r ? ({ validated: 'validé', auto: 'lu, à valider', check: 'à vérifier' }[scanState(r)]) : 'non scanné', ...rows.map(x => r?.values[x.r.id] ?? ''), m ? fmt(m.best).replace('—', '') : '', m?.gap == null ? '' : round1(m.gap), m?.pace == null ? '' : round1(m.pace), ...(B ? (g => g.disp ? [s.sex || '', 'dispensé'] : [s.sex || '', g.perf ?? '', g.reg ?? '', g.afl1 ?? '', g.choix || '', g.gap != null ? round1(g.gap) : '', g.d2 ?? '', g.p2 ?? '', ROLE[g.role] || '', g.d3 ?? '', g.p3 ?? '', g.total ?? ''])(grade(t, s, m)) : [])]);
   }
   const slug = t.name.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/gi, '-').toLowerCase();
   download('resultats-' + slug + '-' + (c === '*' ? 'toutes-classes' : className(c).replace(/\s+/g, '')) + '.csv', '﻿' + lines.map(row => row.map(x => '"' + String(x ?? '').replace(/"/g, '""') + '"').join(';')).join('\r\n'), 'text/csv;charset=utf-8');
@@ -634,7 +696,7 @@ function resultsHTML(t, cid) {
   const cols = resultColumns(t), rows = t.blocks.flatMap(b => b.rows.map(r => ({ r, head: (b.title ? b.title + ' · ' : '') + r.label })));
   const lab = { validated: 'Validé', auto: 'Lu, à valider', check: 'À vérifier' };
   let v = 0, rd = 0;
-  const B = BAREMES[t.bareme];
+  const B = bar(t.bareme);
   const main = students.map(s => {
     const r = latestScan(s.id, t.id), m = r ? metrics(t, r.values) : null, st = scanState(r), g = B ? grade(t, s, m) : null;
     if (r) rd++; if (st === 'validated') v++;
@@ -645,21 +707,21 @@ function resultsHTML(t, cid) {
 
   const detail = students.map(s => { const r = latestScan(s.id, t.id), m = r ? metrics(t, r.values) : null, st = scanState(r); return '<tr><td>' + escapeHtml(s.name) + '</td>' + rows.map(x => '<td>' + escapeHtml(r?.values[x.r.id] ?? '') + '</td>').join('') + '<td>' + (m ? fmt(m.best) : '') + '</td><td>' + (m?.gap != null ? round1(m.gap) + ' s' : '') + '</td><td>' + (m?.pace != null ? round1(m.pace) + ' s' : '') + '</td><td class="st ' + (st || 'none') + '">' + (lab[st] || 'Non scanné') + '</td></tr>'; }).join('');
   return '<section><h2>' + escapeHtml(className(cid)) + '</h2><p class="sub">' + students.length + ' élèves · ' + rd + ' fiches lues · ' + v + ' validées</p>' +
-    '<table' + (B ? ' class="gt"' : '') + '><thead>' + (B ? gradeHead(false) : '<tr><th>Élève</th>' + cols.map(x => '<th>' + escapeHtml(x.head) + '</th>').join('') + '<th>État</th></tr>') + '</thead><tbody>' + main + '</tbody></table>' + (B ? '<h3>Temps relevés</h3>' : '<details><summary>Détail de toutes les valeurs</summary>') + '<table class="small"><thead><tr><th>Élève</th>' + rows.map(x => '<th>' + escapeHtml(x.head) + '</th>').join('') + '<th>Meilleur</th><th>Écarts estimation</th><th>Écart des 200 m</th><th>État</th></tr></thead><tbody>' + detail + '</tbody></table>' + (B ? '' : '</details>') + '</section>';
+    '<table' + (B ? ' class="gt"' : '') + '><thead>' + (B ? gradeHead(B, false) : '<tr><th>Élève</th>' + cols.map(x => '<th>' + escapeHtml(x.head) + '</th>').join('') + '<th>État</th></tr>') + '</thead><tbody>' + main + '</tbody></table>' + (B ? '<h3>Temps relevés</h3>' : '<details><summary>Détail de toutes les valeurs</summary>') + '<table class="small"><thead><tr><th>Élève</th>' + rows.map(x => '<th>' + escapeHtml(x.head) + '</th>').join('') + '<th>Meilleur</th><th>Écarts estimation</th><th>Écart des 200 m</th><th>État</th></tr></thead><tbody>' + detail + '</tbody></table>' + (B ? '' : '</details>') + '</section>';
 }
 function exportHTML(tid, cid) {
   const t = tplById(tid || $('resultTpl').value); if (!t) return;
   const sel = cid || $('resultClass').value, all = sel === '*', cids = all ? classesUsing(t) : [sel];
   if (!cids.length) return alert('Aucune classe n’a encore utilisé cette fiche.');
   const date = new Date().toLocaleDateString('fr-FR');
-  const B = BAREMES[t.bareme];
+  const B = bar(t.bareme);
   const css = GRADE_CSS + '.gt .seg,.gt button{display:none}body{font-family:system-ui,-apple-system,sans-serif;color:#18314c;margin:24px}h1{margin:0 0 4px;color:#123d66}h2{margin:26px 0 2px;color:#123d66}.sub{color:#5a6f85;margin:0 0 10px}table{border-collapse:collapse;width:100%;margin:6px 0 10px}th,td{border:1px solid #d5e0ea;padding:6px 8px;text-align:left;font-size:14px}th{background:#edf3fa}.small td,.small th{font-size:12px}tr:nth-child(even) td{background:#fafcfe}.st.validated{color:#16683d;font-weight:600}.st.check{color:#855500;font-weight:600}.st.auto{color:#124f8a}.st.none{color:#999}summary{cursor:pointer;color:#1267a5;margin:4px 0}@media print{details{display:none}section{break-inside:avoid-page}section+section{break-before:page}}';
   const doc = '<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' + escapeHtml(t.name) + ' — archive</title><style>' + css + '.cover{min-height:80vh;display:flex;flex-direction:column;justify-content:center;border:3px solid #123d66;border-radius:18px;padding:40px;margin-bottom:30px}.cover h1{font-size:34px}.cover .kv{font-size:18px;margin:6px 0}@media print{.cover{min-height:250mm;break-after:page}}</style></head><body>' + coverHTML(t, cids, 'Archive des résultats') + '<h1>' + escapeHtml(t.name) + '</h1><p class="sub">Archive complète · exportée le ' + date + ' · ScanDocument EPS' + (B ? ' · ' + escapeHtml(B.name) : '') + '</p>' + cids.map(c => resultsHTML(t, c)).join('') + (B ? baremeLegend(B) : '') + '</body></html>';
   download('archive-' + slug(t.name) + '-' + (all ? 'toutes-classes' : slug(className(cids[0]))) + '.html', doc, 'text/html;charset=utf-8');
 }
 
 function coverHTML(t, cids, kind) {
-  const B = BAREMES[t.bareme], studs = state.students.filter(s => cids.includes(s.classId));
+  const B = bar(t.bareme), studs = state.students.filter(s => cids.includes(s.classId));
   const read = studs.filter(s => latestScan(s.id, t.id)).length, done = B ? studs.filter(s => grade(t, s, (r => r ? metrics(t, r.values) : null)(latestScan(s.id, t.id))).total != null).length : null;
   return '<div class="cover"><p class="sub" style="font-size:16px;letter-spacing:.1em">' + escapeHtml(kind.toUpperCase()) + '</p><h1>' + escapeHtml(t.name) + '</h1>' + (B ? '<p class="kv">' + escapeHtml(B.name) + '</p>' : '') +
     '<p class="kv"><b>Classe(s) :</b> ' + cids.map(c => escapeHtml(className(c))).join(', ') + '</p><p class="kv"><b>Élèves :</b> ' + studs.length + ' · <b>fiches lues :</b> ' + read + (done != null ? ' · <b>notes complètes :</b> ' + done : '') + '</p>' +
@@ -667,20 +729,23 @@ function coverHTML(t, cids, kind) {
 }
 function baremeLegend(B) {
   const row = (lab, cells, cls) => '<tr><th class="' + cls + '">' + lab + '</th>' + cells.map(c => '<td>' + c + '</td>').join('') + '</tr>';
-  return '<section><h2>Rappel du barème</h2><table class="gt" style="min-width:0;width:auto"><thead><tr><th>Points max</th><th>Degré 1</th><th>Degré 2</th><th>Degré 3</th><th>Degré 4</th></tr></thead><tbody>' +
-    [[2, 'a1s'], [4, 'a2s'], [6, 'a3s']].map(([n, c]) => row('/' + n, [1, 2, 3, 4].map(d => nf(d * n / 4)), c)).join('') + '</tbody></table>' +
-    '<p class="sub">Choix de l’élève : 2-6 (AFL2 /2, AFL3 /6) · 4-4 (AFL2 /4, AFL3 /4) · 6-2 (AFL2 /6, AFL3 /2). AFL1 /12 = performance /6 (meilleur des deux 800 m, table fille/garçon) + régularité /6 (écart entre le 200 m le plus rapide et le plus lent des deux 800 m). AFL2 et AFL3 : un seul degré (1 à 4) par AFL, converti en points selon le choix de l’élève. Le degré AFL2 est proposé d’après les écarts cumulés entre temps annoncés et réalisés (≤ 8 s D4, 9-15 s D3, 16-25 s D2, > 25 s D1) et peut être ajusté par l’enseignant.</p></section>';
+  const perf = '<table class="gt" style="min-width:0;width:auto"><thead><tr><th>Points</th><th>Fille ≤</th><th>Garçon ≤</th></tr></thead><tbody>' + B.perf.slice().sort((a, b) => a.pts - b.pts).map(r => '<tr><td>' + nf(r.pts) + '</td><td>' + (r.F != null ? fmt(r.F) : '') + '</td><td>' + (r.G != null ? fmt(r.G) : '') + '</td></tr>').join('') + '</tbody></table>';
+  const reg = B.reg.length ? '<table class="gt" style="min-width:0;width:auto"><thead><tr><th>Écart ≤</th><th>Points</th></tr></thead><tbody>' + B.reg.slice().sort((a, b) => b.max - a.max).map(r => '<tr><td>' + (r.max < 4 && r.max > 3.99 ? '< 4' : nf(r.max)) + ' s</td><td>' + nf(r.pts) + '</td></tr>').join('') + '</tbody></table>' : '<p class="sub">Pas de note de régularité.</p>';
+  return '<section><h2>Rappel du barème · ' + escapeHtml(B.name) + '</h2><div style="display:flex;gap:24px;flex-wrap:wrap;align-items:flex-start"><div><h3>AFL1 · performance /' + nf(B.perfMax) + '</h3>' + perf + '</div><div><h3>AFL1 · régularité' + (B.regMax ? ' /' + nf(B.regMax) : '') + '</h3>' + reg + '</div><div><h3>AFL2 / AFL3 · degrés</h3><table class="gt" style="min-width:0;width:auto"><thead><tr><th>Points max</th><th>D1</th><th>D2</th><th>D3</th><th>D4</th></tr></thead><tbody>' +
+    [[2, 'a1s'], [4, 'a2s'], [6, 'a3s']].map(([n, c]) => row('/' + n, [1, 2, 3, 4].map(d => nf(d * n / 4)), c)).join('') + '</tbody></table></div></div>' +
+    '<p class="sub">Choix de l’élève : 2-6 (AFL2 /2, AFL3 /6) · 4-4 (AFL2 /4, AFL3 /4) · 6-2 (AFL2 /6, AFL3 /2). Un seul degré (1 à 4) par AFL. Le degré AFL2 est proposé d’après les écarts cumulés estimation / réalisé (D4 ≤ ' + B.afl2[0] + ' s, D3 ≤ ' + B.afl2[1] + ' s, D2 ≤ ' + B.afl2[2] + ' s, sinon D1) et peut être ajusté par l’enseignant.</p></section>';
 }
 function exportSantorin(tid, cid) {
-  const t = tplById(tid || $('resultTpl').value); if (!t || !BAREMES[t.bareme]) return;
+  const t = tplById(tid || $('resultTpl').value); if (!t || !bar(t.bareme)) return;
   const sel = cid || $('resultClass').value, all = sel === '*', cids = all ? classesUsing(t) : [sel];
   if (!cids.length) return alert('Aucune classe n’a encore utilisé cette fiche.');
   const css = 'body{font-family:system-ui,-apple-system,sans-serif;color:#18314c;margin:24px}h1{margin:0;color:#123d66}h2{color:#123d66;margin:28px 0 8px}p{color:#5a6f85}table{border-collapse:collapse;min-width:640px}th,td{border:1px solid #c9d6e3;padding:9px 12px;font-size:17px;text-align:center}td.l{text-align:left}th{background:#edf3fa}.a1{background:#e6f3fc}.a2{background:#edf6e4}.a3{background:#fff8d6}th.a1{background:#8cc8ef}th.a2{background:#a9cf86}th.a3{background:#f3dd5e}.n{font-weight:900;font-size:19px}.vide{background:#fde8eb!important}@media print{section+section{break-before:page}}';
   const sec = cid => {
     const studs = state.students.filter(s => s.classId === cid).sort((a, b) => a.name.localeCompare(b.name, 'fr'));
     const rows = studs.map(s => { const r = latestScan(s.id, t.id), m = r ? metrics(t, r.values) : null, g = grade(t, s, m), [nom, pre] = splitName(s.name), c = (v, cls) => '<td class="' + cls + (v == null ? ' vide' : '') + '">' + (v == null ? '' : nf(v)) + '</td>';
+      if (g.disp) return '<tr><td class="l"><b>' + escapeHtml(nom) + '</b></td><td class="l">' + escapeHtml(pre) + '</td><td colspan="5" style="color:#5a6f85;font-weight:700">Dispensé(e)</td></tr>';
       return '<tr><td class="l"><b>' + escapeHtml(nom) + '</b></td><td class="l">' + escapeHtml(pre) + '</td><td' + (g.choix ? '' : ' class="vide"') + '>' + (g.choix || '') + '</td>' + c(g.afl1, 'a1') + c(g.p2, 'a2') + c(g.p3, 'a3') + c(g.total, 'n') + '</tr>'; }).join('');
-    return '<section><h2>' + escapeHtml(className(cid)) + '</h2><table><thead><tr><th>Nom</th><th>Prénom</th><th>Choix AFL</th><th class="a1">AFL1 /12</th><th class="a2">AFL2</th><th class="a3">AFL3</th><th>Note /20</th></tr></thead><tbody>' + rows + '</tbody></table></section>';
+    return '<section><h2>' + escapeHtml(className(cid)) + '</h2><table><thead><tr><th>Nom</th><th>Prénom</th><th>Choix AFL</th><th class="a1">AFL1 /' + nf(bar(t.bareme).afl1max) + '</th><th class="a2">AFL2</th><th class="a3">AFL3</th><th>Note /' + nf(bar(t.bareme).afl1max + 8) + '</th></tr></thead><tbody>' + rows + '</tbody></table></section>';
   };
   const doc = '<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Santorin — ' + escapeHtml(t.name) + '</title><style>' + css + '</style></head><body><h1>Saisie Santorin · ' + escapeHtml(t.name) + '</h1><p>Exporté le ' + new Date().toLocaleDateString('fr-FR') + ' · cases rouges = à compléter avant la saisie.</p>' + cids.map(sec).join('') + '</body></html>';
   download('santorin-' + slug(t.name) + '-' + (all ? 'toutes-classes' : slug(className(cids[0]))) + '.html', doc, 'text/html;charset=utf-8');
