@@ -29,8 +29,9 @@ function persist() { return new Promise((resolve, reject) => { const t = db.tran
 function migrate() {
   state.queue = state.queue || [];
   state.templates = state.templates || [];
-  // anciennes fiches 2 × 800 (avant les modèles) : on garde le modèle correspondant
-  if (!tplById('t2x800') && (state.scans.some(s => s.races || s.templateId === 't2x800') || state.queue.length)) state.templates.push(Object.assign(JSON.parse(JSON.stringify(LIBRARY[0])), { createdAt: today() }));
+  // modèles de la bibliothèque (2 × 800, 3 × 500) toujours disponibles, sauf si supprimés volontairement
+  state.removedLib = state.removedLib || [];
+  for (const lib of LIBRARY) if (!tplById(lib.id) && (!state.removedLib.includes(lib.id) || state.scans.some(s => s.races || s.templateId === lib.id))) state.templates.push(Object.assign(JSON.parse(JSON.stringify(lib)), { createdAt: today() }));
   for (const c of state.classes) c.folder = c.folder || schoolYear();
   for (const t of state.templates) { t.printedFor = t.printedFor || []; t.createdAt = t.createdAt || today(); }
   for (const s of state.scans) {
@@ -50,7 +51,7 @@ function migrate() {
 }
 
 /* ---------- Navigation ---------- */
-function view(id) { document.querySelectorAll('main section').forEach(s => s.classList.toggle('hidden', s.id !== id)); render(); }
+function view(id) { document.querySelectorAll('main section').forEach(s => s.classList.toggle('hidden', s.id !== id)); render(); window.scrollTo(0, 0); }
 function currentClass() { return $('classSelect').value || state.classes[0]?.id; }
 function fillSelect(id, items, keepFirst) {
   const el = $(id), old = el.value;
@@ -119,7 +120,7 @@ function renderLibrary() {
     const pc = [...new Set((t.printedFor || []).map(p => className(p.classId)).filter(Boolean))];
     const sclasses = [...new Set(sc.map(x => className(x.classId)).filter(Boolean))];
     const info = [(lay.ok ? lay.fmt : '⚠') + ' · ' + t.blocks.reduce((a, b) => a + b.rows.length, 0) + ' lignes', 'Créée le ' + new Date(t.createdAt || today()).toLocaleDateString('fr-FR'), pc.length ? 'Imprimée pour : ' + pc.join(', ') : 'Jamais imprimée', sc.length ? sc.length + ' fiche(s) lue(s), ' + sc.filter(x => x.status === 'validated').length + ' validée(s)' + (sclasses.length ? ' · ' + sclasses.join(', ') : '') : 'Aucune fiche lue'];
-    return '<div class="card">' + thumb(t) + '<h4>' + escapeHtml(t.name) + (t.locked ? ' 🔒' : '') + '</h4><div class="muted">' + info.map(escapeHtml).join('<br>') + '</div><div class="acts"><button onclick="openEval({tplId:\'' + t.id + '\'})">🖨 Préparer l’évaluation</button><button class="secondary" onclick="editTpl(\'' + t.id + '\')">' + (t.locked ? 'Voir' : 'Modifier') + '</button></div></div>';
+    return '<div class="card">' + thumb(t) + '<h4>' + escapeHtml(t.name) + (t.locked ? ' 🔒' : '') + '</h4><div class="muted">' + info.map(escapeHtml).join('<br>') + '</div><div class="acts"><button onclick="openEval({tplId:\'' + t.id + '\'})">🖨 Imprimer</button><button class="secondary" onclick="editTpl(\'' + t.id + '\')">Ouvrir</button></div></div>';
   }).join('') || '<p class="muted">Aucune fiche : choisis un modèle ci-dessus ou crée une fiche vierge.</p>';
 }
 async function useModel(i) {
@@ -217,7 +218,7 @@ const delBlock = bi => { if (confirm('Supprimer ce bloc ?')) tplMut(t => t.block
 const moveBlock = (bi, d) => tplMut(t => { const j = bi + d; if (j < 0 || j >= t.blocks.length) return; [t.blocks[bi], t.blocks[j]] = [t.blocks[j], t.blocks[bi]]; });
 async function newTpl() { const t = { id: sid('t'), name: 'Nouvelle fiche', createdAt: today(), printedFor: [], format: 'auto', minutesMax: 5, cumulative: true, blocks: [{ title: 'Course 1', rows: [{ id: sid('r'), label: 'Estimation', type: 'time' }, { id: sid('r'), label: 'Temps final', type: 'time' }] }] }; state.templates.push(t); await persist(); editTpl(t.id); }
 async function dupTpl() { const s = curTpl(); if (!s) return; const t = JSON.parse(JSON.stringify(s)); t.id = sid('t'); t.name = s.name + ' (copie)'; t.locked = false; t.printedFor = []; t.createdAt = today(); t.blocks.forEach(b => b.rows.forEach(r => { r.id = sid('r'); })); state.templates.push(t); await persist(); editTpl(t.id); }
-async function delTpl() { const t = curTpl(); if (!t) return; if (tplUsed(t)) return alert('Des fiches lues utilisent ce modèle : suppression impossible.'); if (!confirm('Supprimer la fiche « ' + t.name + ' » ?' + (t.locked ? ' Les fiches déjà imprimées ne pourront plus être lues.' : ''))) return; state.templates = state.templates.filter(x => x.id !== t.id); editorTpl = null; editorOpen = false; await persist(); render(); }
+async function delTpl() { const t = curTpl(); if (!t) return; if (tplUsed(t)) return alert('Des fiches lues utilisent ce modèle : suppression impossible.'); if (!confirm('Supprimer la fiche « ' + t.name + ' » ?' + (t.locked ? ' Les fiches déjà imprimées ne pourront plus être lues.' : ''))) return; state.templates = state.templates.filter(x => x.id !== t.id); if (LIBRARY.some(l => l.id === t.id)) state.removedLib.push(t.id); editorTpl = null; editorOpen = false; await persist(); render(); }
 async function unlockTpl() { const t = curTpl(); if (!t) return; if (!confirm('Si tu modifies cette fiche, les exemplaires déjà imprimés ne seront plus lus correctement. Déverrouiller ?')) return; t.locked = false; await persist(); render(); }
 
 /* ---------- Évaluation : impression et dossier ---------- */
@@ -225,19 +226,23 @@ let evCtx = {};
 function openPrintPages(pages, info) { $('printPages').innerHTML = pages.join(''); $('printInfo').textContent = info; $('printView').classList.remove('hidden'); $('printView').scrollTop = 0; }
 function closePrint() { $('printView').classList.add('hidden'); $('printPages').innerHTML = ''; }
 function openEval(ctx) {
-  if (!state.templates.length) { alert('Ajoute d’abord une fiche depuis la Bibliothèque (étape 2).'); view('models'); return; }
-  if (!state.classes.length) { alert('Crée d’abord une classe (étape 1).'); view('classes'); return; }
   evCtx = ctx || {};
+  view('prep');
+  $('evDone').classList.add('hidden');
   fillSelect('evTpl', state.templates.map(t => [t.id, t.name]), true);
   if (evCtx.tplId) $('evTpl').value = evCtx.tplId;
   const st = evCtx.studentId ? state.students.find(x => x.id === evCtx.studentId) : null;
+  $('evNoClass').classList.toggle('hidden', !!state.classes.length);
   $('evClassBox').classList.toggle('hidden', !!st); $('evStudentBox').classList.toggle('hidden', !st); $('evZipBtn').classList.toggle('hidden', !!st);
   if (st) $('evStudentBox').textContent = 'Fiche de ' + st.name + ' (' + className(st.classId) + ')';
-  const pre = evCtx.classId || currentClass();
-  $('evClasses').innerHTML = folders().map(f => '<h4>📁 ' + escapeHtml(f) + '</h4>' + state.classes.filter(c => c.folder === f).sort((a, b) => a.name.localeCompare(b.name, 'fr', { numeric: true })).map(c => '<label><input type="checkbox" value="' + c.id + '"' + (c.id === pre ? ' checked' : '') + ' onchange="evInfo()"> ' + escapeHtml(c.name) + ' <span class="muted">(' + state.students.filter(s => s.classId === c.id).length + ' élèves)</span></label>').join('')).join('');
-  $('evalDialog').classList.remove('hidden'); evInfo();
+  const pre = evCtx.classId;
+  $('evClasses').innerHTML = folders().map(f => '<h4>📁 ' + escapeHtml(f) + '</h4>' + state.classes.filter(c => c.folder === f).sort((a, b) => a.name.localeCompare(b.name, 'fr', { numeric: true })).map(c => '<label><input type="checkbox" value="' + c.id + '"' + (c.id === pre ? ' checked' : '') + ' onchange="evInfo()"> ' + escapeHtml(c.name) + ' <span class="muted">(' + state.students.filter(s => s.classId === c.id).length + ' élèves)</span></label>').join('')).join('') || '<p class="muted">Aucune classe.</p>';
+  evInfo();
 }
-function closeEval() { $('evalDialog').classList.add('hidden'); }
+function closeEval() {}
+function evTiles() {
+  $('evTplCards').innerHTML = state.templates.map(t => { const lay = Fiche.layoutFor(t); return '<button class="' + (t.id === $('evTpl').value ? 'on' : '') + '" onclick="$(\'evTpl\').value=\'' + t.id + '\';evInfo()"><b>' + escapeHtml(t.name) + '</b><span class="muted">' + (lay.ok ? lay.fmt + ' · ' + t.blocks.length + ' bloc(s)' : '⚠ incomplète') + '</span></button>'; }).join('');
+}
 function evSelection() {
   const t = tplById($('evTpl').value), lay = t ? Fiche.layoutFor(t) : null;
   if (evCtx.studentId) { const s = state.students.find(x => x.id === evCtx.studentId); return { t, lay, groups: [{ c: s.classId, list: [{ tpl: t, name: s.name, className: className(s.classId), payload: Fiche.studentPayload(s.id, t.id) }] }] }; }
@@ -247,8 +252,10 @@ function evSelection() {
   return { t, lay, groups };
 }
 function evInfo() {
+  evTiles(); $('evDone').classList.add('hidden');
   const { lay, groups } = evSelection();
   if (!lay || !lay.ok) { $('evInfo').textContent = '⚠ ' + (lay ? lay.error : 'Choisis une fiche'); return; }
+  if (!groups.length) { $('evInfo').textContent = 'Coche au moins une classe.'; return; }
   const n = groups.reduce((a, g) => a + g.list.length, 0), sheets = groups.reduce((a, g) => a + (lay.fmt === 'A5' ? Math.ceil(g.list.length / 2) : g.list.length), 0);
   $('evInfo').textContent = n + ' fiche(s) ' + lay.fmt + ' · ' + sheets + ' feuille(s) A4' + (lay.fmt === 'A5' ? ' (2 fiches par feuille, à couper)' : '');
 }
@@ -272,7 +279,7 @@ async function evDownload() {
   for (const g of groups) files.push({ name: dir + slug(className(g.c)) + '.html', data: enc.encode(printableHTML(t.name + ' — ' + className(g.c), Fiche.pagesSVG(g.list))) });
   files.push({ name: dir + 'LISEZ-MOI.txt', data: enc.encode(t.name + '\r\nPréparé le ' + new Date().toLocaleDateString('fr-FR') + '\r\n\r\nUn fichier par classe. Ouvrir, puis imprimer en taille réelle (100 %), recto seul.\r\n' + (lay.fmt === 'A5' ? 'Deux fiches A5 par feuille A4 : couper le long des pointillés.\r\n' : '') + 'Après l\'épreuve : photographier les fiches entières dans ScanDocument EPS (étape 3).\r\n\r\nClasses : ' + groups.map(g => className(g.c) + ' (' + g.list.length + ' fiches)').join(', ') + '\r\n') });
   download(slug(t.name) + '_' + today() + '.zip', makeZip(files), 'application/zip');
-  closeEval();
+  $('evDone').textContent = '✓ Dossier téléchargé : un fichier par classe. Ouvre-le et imprime en taille réelle (100 %).'; $('evDone').classList.remove('hidden');
 }
 /* ZIP sans compression (méthode « stockée ») */
 const CRC = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
@@ -404,6 +411,7 @@ function addFromRead(read, photo, classId) {
     const tu = tplById(read.tplId); if (tu) tu.locked = true;
     return true;
   }
+  if (read.ref?.kind === 'student' && !st) read.issues.unshift('Élève introuvable dans tes classes : choisis l’élève');
   if (read.ref?.kind === 'spare' && state.classes.some(c => c.id === read.ref.classId)) classId = read.ref.classId;
   state.queue.push({ id: uid(), classId, photo, studentId: null, read, tplId: read.tplId });
   return false;
@@ -421,15 +429,16 @@ async function captureBatch(e) {
     }
   } catch (err) { alert('Enregistrement impossible : ' + err.message); }
   batchBusy = false; render();
-  $('batchCount').textContent = auto + ' fiche(s) lue(s) et rangée(s) dans les résultats · ' + manual + ' à traiter ci-dessous';
+  $('batchCount').textContent = [auto ? '✓ ' + auto + ' fiche(s) lue(s) et rangée(s) dans les Résultats' : '', manual ? manual + ' fiche(s) à vérifier ci-dessous' : ''].filter(Boolean).join(' · ') + '.';
 }
+function valuesSummary(tid, values) { const t = tplById(tid) || LIBRARY.find(l => l.id === tid); if (!t) return Object.values(values).join(' · '); return t.blocks.map(b => (b.title ? b.title + ' : ' : '') + b.rows.map(r => values[r.id] ?? '—').join(' / ')).join(' · '); }
 async function rereadBatch(id) { const q = state.queue.find(x => x.id === id); if (!q) return; const read = await readSafe(q.photo); state.queue = state.queue.filter(x => x.id !== id); const ok = addFromRead(read, q.photo, q.classId); await persist(); render(); $('batchCount').textContent = ok ? 'Fiche relue et rangée dans les résultats' : 'Fiche toujours à traiter : ' + read.issues.join(' · '); }
 async function deleteBatch(id) { if (!confirm('Supprimer cette photo ?')) return; state.queue = state.queue.filter(x => x.id !== id); await persist(); renderBatch(); }
 function renderBatch() {
   if (!$('batchClass')) return;
   const c = $('batchClass').value, items = state.queue.filter(x => x.classId === c);
-  if (!batchBusy) $('batchCount').textContent = items.length ? items.length + ' fiche(s) à traiter ci-dessous' : 'Aucune fiche en attente. Les fiches lues sont dans l’onglet Résultats.';
-  $('batchGallery').innerHTML = items.map(x => '<div class="rowcard"><img class="preview" style="width:100%;max-height:260px" src="' + x.photo + '"><p class="muted">' + escapeHtml(x.read?.issues?.length ? x.read.issues.join(' · ') : 'Lecture non effectuée') + '</p><button onclick="reviewBatch(\'' + x.id + '\')">Vérifier / associer</button> <button class="secondary" onclick="rereadBatch(\'' + x.id + '\')">Relire</button> <button class="secondary" onclick="deleteBatch(\'' + x.id + '\')">Supprimer</button></div>').join('');
+  if (!batchBusy) $('batchCount').textContent = items.length ? items.length + ' fiche(s) à vérifier ci-dessous.' : 'Les fiches reconnues vont directement dans les Résultats.';
+  $('batchGallery').innerHTML = items.map(x => '<div class="rowcard"><img class="preview" style="width:100%;max-height:260px" src="' + x.photo + '"><p class="muted">' + escapeHtml(x.read?.issues?.length ? x.read.issues.join(' · ') : 'Lecture non effectuée') + '</p>' + (x.read && Object.keys(x.read.values || {}).length ? '<p><b>Valeurs lues :</b> ' + escapeHtml(valuesSummary(x.read.tplId, x.read.values)) + '</p>' : '') + '<button onclick="reviewBatch(\'' + x.id + '\')">Vérifier / associer</button> <button class="secondary" onclick="rereadBatch(\'' + x.id + '\')">Relire</button> <button class="secondary" onclick="deleteBatch(\'' + x.id + '\')">Supprimer</button></div>').join('');
 }
 function reviewBatch(id) {
   const q = state.queue.find(x => x.id === id); if (!q) return;
