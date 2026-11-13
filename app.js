@@ -11,12 +11,51 @@ const today = () => new Date().toISOString().slice(0, 10);
 
 /* ---------- Bibliothèque de modèles ---------- */
 const LIBRARY = [
-  { id: 't2x800', name: 'Demi-fond 2 × 800 m', format: 'auto', minutesMax: 5, cumulative: true,
+  { id: 't2x800', name: 'Demi-fond 2 × 800 m', format: 'auto', minutesMax: 5, cumulative: true, bareme: 'ca1-2x800',
     blocks: [1, 2].map(i => ({ title: (i === 1 ? '1er' : '2e') + ' 800 m', rows: [['e', 'Estimation'], ['a', '200 m'], ['b', '400 m'], ['c', '600 m'], ['d', '800 m']].map(([k, l]) => ({ id: 'c' + i + k, label: l, type: 'time' })) })) },
   { id: 't3x500', name: 'Demi-fond 3 × 500 m', format: 'auto', minutesMax: 5, cumulative: true,
     blocks: [1, 2, 3].map(i => ({ title: 'Course ' + i, rows: [['e', 'Estimation'], ['a', '250 m'], ['b', '500 m']].map(([k, l]) => ({ id: 'c' + i + k, label: l, type: 'time' })) })) }
 ];
 const LIB_DESC = { t2x800: '2 courses · estimation + passages 200, 400, 600 et 800 m (cumulés) · A5', t3x500: '3 courses · estimation + passages 250 et 500 m (cumulés) · A5' };
+/* ---------- Barèmes ---------- */
+const mmss = x => { const [m, s] = x.split(':').map(Number); return m * 60 + s; };
+const BAREMES = {
+  'ca1-2x800': {
+    name: 'CA1 Demi-fond 2 × 800 m — CCF (Lycée Vauban, session 2027)',
+    // AFL1 performance /6 : meilleur des deux 800 m
+    perf: {
+      F: ['5:06', '4:59', '4:52', '4:45', '4:38', '4:32', '4:26', '4:20', '4:14', '4:08', '4:02', '3:56', '3:50', '3:45', '3:40', '3:35', '3:30', '3:25', '3:20', '3:15', '3:10', '3:05', '3:00', '2:55'].map(mmss),
+      G: ['4:02', '3:57', '3:52', '3:47', '3:42', '3:37', '3:32', '3:27', '3:22', '3:17', '3:12', '3:08', '3:04', '3:00', '2:56', '2:52', '2:48', '2:45', '2:42', '2:39', '2:36', '2:33', '2:30', '2:27'].map(mmss)
+    },
+    // AFL1 efficacité technique /6 : écart entre le 200 m le plus rapide et le plus lent (deux 800 m)
+    regul: [[20, 0.5], [18, 1], [16, 1.5], [14, 2], [12, 2.5], [10, 3], [9, 3.5], [8, 4], [7, 4.5], [6, 5], [5, 5.5]],
+    // AFL2 « estimer ses performances » : écarts cumulés annoncés / réalisés → degré
+    afl2: [[8, 2], [15, 1.5], [25, 1]]
+  }
+};
+const CHOIX = { '4-4': [2, 2], '6-2': [3, 1], '2-6': [1, 3] };
+function perfPts(table, t) { let p = 0; table.forEach((lim, i) => { if (t <= lim + 0.001) p = (i + 1) * 0.25; }); return p; }
+function regulPts(B, e) { if (e < 4) return 6; for (let i = B.regul.length - 1; i >= 0; i--) if (e <= B.regul[i][0]) return B.regul[i][1]; return 0; }
+function afl2Pts(B, g) { for (const [lim, p] of B.afl2) if (g <= lim) return p; return 0.5; }
+function grade(t, s, m) {
+  const B = BAREMES[t.bareme]; if (!B) return null;
+  const n = (s.notes || {})[t.id] || {}, choix = CHOIX[n.choix] ? n.choix : '4-4', [c2, c3] = CHOIX[choix];
+  const perf = m && m.best != null && B.perf[s.sex] ? perfPts(B.perf[s.sex], m.best) : null;
+  const reg = m && m.pace != null ? regulPts(B, m.pace) : null;
+  const afl1 = perf != null && reg != null ? perf + reg : null;
+  const afl2s = m && m.gap != null ? afl2Pts(B, m.gap) : null;
+  const has = v => v !== undefined && v !== null && v !== '';
+  const afl2 = has(n.afl2) ? +n.afl2 : afl2s, afl3 = has(n.afl3) ? +n.afl3 : null;
+  const total = afl1 != null && afl2 != null && afl3 != null ? afl1 + afl2 * c2 + afl3 * c3 : null;
+  return { perf, reg, afl1, afl2s, afl2, afl3, choix, c2, c3, total, afl2Prop: !has(n.afl2), noSex: !B.perf[s.sex] };
+}
+const nf = v => v == null ? '—' : String(Math.round(v * 100) / 100).replace('.', ',');
+async function setNote(sid, tid, k, v) {
+  const s = state.students.find(x => x.id === sid); if (!s) return;
+  if (k === 'sex') s.sex = v || undefined;
+  else { s.notes = s.notes || {}; s.notes[tid] = s.notes[tid] || {}; s.notes[tid][k] = v === '' ? '' : (k === 'choix' ? v : Math.max(0, Math.min(2, parseFloat(String(v).replace(',', '.')) || 0))); }
+  await persist(); renderResults();
+}
 const schoolYear = () => { const d = new Date(), y = d.getFullYear(); return d.getMonth() >= 7 ? y + '-' + (y + 1) : (y - 1) + '-' + y; };
 const tplById = id => state.templates.find(t => t.id === id);
 const className = id => state.classes.find(c => c.id === id)?.name || '';
@@ -33,7 +72,7 @@ function migrate() {
   state.removedLib = state.removedLib || [];
   for (const lib of LIBRARY) if (!tplById(lib.id) && (!state.removedLib.includes(lib.id) || state.scans.some(s => s.races || s.templateId === lib.id))) state.templates.push(Object.assign(JSON.parse(JSON.stringify(lib)), { createdAt: today() }));
   for (const c of state.classes) c.folder = c.folder || schoolYear();
-  for (const t of state.templates) { t.printedFor = t.printedFor || []; t.createdAt = t.createdAt || today(); }
+  for (const t of state.templates) { t.printedFor = t.printedFor || []; t.createdAt = t.createdAt || today(); if (t.id === 't2x800' && !('bareme' in t)) t.bareme = 'ca1-2x800'; }
   for (const s of state.scans) {
     if (s.races && !s.values) {
       s.templateId = 't2x800'; s.values = {};
@@ -65,7 +104,7 @@ function render() {
   fillSelect('resultClass', [['*', '— Toutes les classes —'], ...cls], false); if (!$('resultClass').value) $('resultClass').value = cls[0]?.[0] || '*';
   ['batchTpl', 'resultTpl', 'scanTpl'].forEach(id => fillSelect(id, tpls, true));
   renderDirectory();
-  $('roster').innerHTML = state.students.filter(s => s.classId === currentClass()).sort((a, b) => a.name.localeCompare(b.name, 'fr')).map(s => '<div class="rowcard flex"><span class="grow">' + escapeHtml(s.name) + '</span><button class="secondary" onclick="openEval({studentId:\'' + s.id + '\'})">🖨 Réimprimer sa fiche</button><button class="secondary" onclick="removeStudent(\'' + s.id + '\')">Retirer</button></div>').join('');
+  $('roster').innerHTML = state.students.filter(s => s.classId === currentClass()).sort((a, b) => a.name.localeCompare(b.name, 'fr')).map(s => '<div class="rowcard flex"><span class="grow">' + escapeHtml(s.name) + '</span><select onchange="setNote(\'' + s.id + '\',null,\'sex\',this.value);render()"><option value="">Fille / Garçon ?</option><option value="F"' + (s.sex === 'F' ? ' selected' : '') + '>Fille</option><option value="G"' + (s.sex === 'G' ? ' selected' : '') + '>Garçon</option></select><button class="secondary" onclick="openEval({studentId:\'' + s.id + '\'})">🖨 Réimprimer sa fiche</button><button class="secondary" onclick="removeStudent(\'' + s.id + '\')">Retirer</button></div>').join('');
   const previous = $('scanStudent').value;
   $('scanStudent').innerHTML = '<option value="">— Élève non identifié —</option>' + state.students.filter(s => s.classId === $('scanClass').value).sort((a, b) => a.name.localeCompare(b.name, 'fr')).map(s => '<option value="' + s.id + '">' + escapeHtml(s.name) + '</option>').join('');
   $('scanStudent').value = state.students.some(s => s.id === previous && s.classId === $('scanClass').value) ? previous : '';
@@ -143,6 +182,8 @@ async function importRoster(e) {
   const headings = parse(header, sep).map(x => x.toLocaleLowerCase('fr').normalize('NFD').replace(/[̀-ͯ]/g, ''));
   const nameCol = headings.findIndex(x => ['eleves', 'eleve', 'nom prenom', 'nom et prenom'].includes(x)), surnameCol = headings.findIndex(x => x === 'nom'), firstnameCol = headings.findIndex(x => x === 'prenom');
   const classCol = headings.findIndex(x => x === 'classe' || x === 'classes' || x === 'division');
+  const sexCol = headings.findIndex(x => ['sexe', 'genre', 'sex', 'fille/garcon'].includes(x));
+  const sexOfCell = v => { v = String(v || '').trim().toUpperCase(); return /^(F|FILLE|FEMININ|FÉMININ)/.test(v) ? 'F' : /^(M|G|GARCON|GARÇON|MASCULIN|H)/.test(v) ? 'G' : undefined; };
   const hasHeader = nameCol >= 0 || surnameCol >= 0; let n = 0; const created = [];
   if (classCol < 0 && !c) { e.target.value = ''; return alert('Crée d’abord une classe, ou importe un fichier avec une colonne « Classe »'); }
   const folder = $('classFolder').value.trim() || schoolYear();
@@ -156,7 +197,9 @@ async function importRoster(e) {
     }
     let name = nameCol >= 0 ? cells[nameCol] : surnameCol >= 0 ? (cells[surnameCol] || '') + ' ' + (firstnameCol >= 0 ? cells[firstnameCol] || '' : '') : cells.length > 1 ? cells[0] + ' ' + cells[1] : cells[0];
     name = (name || '').trim();
-    if (name && !state.students.some(s => s.classId === c && s.name.toLocaleLowerCase('fr') === name.toLocaleLowerCase('fr'))) { state.students.push({ id: uid(), classId: c, name }); n++; }
+    const sx = sexCol >= 0 ? sexOfCell(cells[sexCol]) : undefined;
+    const ex = state.students.find(s => s.classId === c && s.name.toLocaleLowerCase('fr') === name.toLocaleLowerCase('fr'));
+    if (name && !ex) { state.students.push({ id: uid(), classId: c, name, sex: sx }); n++; } else if (ex && sx && !ex.sex) ex.sex = sx;
   }
   await persist(); e.target.value = ''; render(); alert(n + ' élèves importés (noms et prénoms uniquement)' + (created.length ? '\n' + created.length + ' classe(s) créée(s) dans « ' + folder + ' » : ' + created.join(', ') : ''));
 }
@@ -181,6 +224,7 @@ function renderEditor() {
   h += '<div><label>Minutes</label><select onchange="tplSet(\'minutesMax\',+this.value)"' + dis + '><option value="5"' + (t.minutesMax !== 9 ? ' selected' : '') + '>0 à 5</option><option value="9"' + (t.minutesMax === 9 ? ' selected' : '') + '>0 à 9</option></select></div>';
   h += '<div><label>QR code</label><select onchange="tplSet(\'qrColor\',this.value)"' + dis + '><option value="#000"' + (t.qrColor !== '#1a4f9c' ? ' selected' : '') + '>Noir</option><option value="#1a4f9c"' + (t.qrColor === '#1a4f9c' ? ' selected' : '') + '>Bleu</option></select></div>';
   h += '<div><label>Temps de passage</label><select onchange="tplSet(\'cumulative\',this.value===\'1\')"' + dis + '><option value="1"' + (t.cumulative !== false ? ' selected' : '') + '>cumulés (chrono qui tourne)</option><option value="0"' + (t.cumulative === false ? ' selected' : '') + '>par fraction</option></select></div></div>';
+  h += '<label>Barème (note)</label><select onchange="tplBareme(this.value)"><option value="">Aucun</option>' + Object.entries(BAREMES).map(([k, b]) => '<option value="' + k + '"' + (t.bareme === k ? ' selected' : '') + '>' + escapeHtml(b.name) + '</option>').join('') + '</select>';
   h += '<p class="muted">Une ligne de temps nommée « Estimation » sert au calcul de l’écart estimation/réalisation. Le dernier temps d’un bloc est son temps final.</p>';
   t.blocks.forEach((b, bi) => {
     h += '<div class="block"><div class="flex"><input class="grow" value="' + escapeHtml(b.title) + '" placeholder="Titre du bloc (ex. Course 1)" onchange="blockSet(' + bi + ',this.value)"' + dis + '>';
@@ -202,6 +246,7 @@ function renderEditor() {
   $('tplPreview').innerHTML = Fiche.ficheSVG({ tpl: t, name: 'NOM Prénom', className: 'Classe', payload: Fiche.studentPayload('apercu', t.id), layout: lay });
   $('tplInfo').textContent = lay.ok ? 'Format ' + lay.fmt + (lay.fmt === 'A5' ? ' · 2 fiches par feuille A4' : ' · 1 fiche par feuille A4') + ' · ' + lay.rows.length + ' lignes' : '⚠ ' + lay.error;
 }
+async function tplBareme(v) { const t = curTpl(); if (!t) return; t.bareme = v || undefined; await persist(); render(); }
 async function tplMut(fn) { const t = curTpl(); if (!t || t.locked) return; fn(t); await persist(); render(); }
 const tplSet = (k, v) => tplMut(t => { t[k] = k === 'name' ? (v.trim() || 'Sans nom') : v; });
 const blockSet = (bi, v) => tplMut(t => { t.blocks[bi].title = v.trim(); });
@@ -347,7 +392,7 @@ function calculate() {
   const t = scanTpl(), m = metrics(t, formValues()), parts = [];
   if (m.blocks.some(b => b.hasTime)) parts.push('Meilleur temps : ' + fmt(m.best));
   if (m.blocks.some(b => b.hasEst)) parts.push('Écarts estimation : ' + (m.gap == null ? '—' : round1(m.gap) + ' s'));
-  if (m.pace != null) parts.push('Écart entre fractions : ' + round1(m.pace) + ' s');
+  if (m.pace != null) parts.push('Écart entre 200 m : ' + round1(m.pace) + ' s');
   $('calculations').textContent = (parts.join(' · ') || 'Aucun temps sur cette fiche') + (m.anomalies.length ? ' ⚠ ' + m.anomalies.join(' ; ') : '');
 }
 function showIssues(list) { const el = $('scanIssues'); el.classList.toggle('hidden', !list.length); el.textContent = list.length ? '⚠ ' + list.join(' · ') : ''; }
@@ -474,7 +519,7 @@ function resultColumns(t) {
   const hasTime = t.blocks.some(b => b.rows.some(r => r.type === 'time'));
   if (hasTime && t.blocks.filter(b => b.rows.some(r => r.type === 'time' && !isEst(r))).length > 1) cols.push({ head: 'Meilleur', get: m => fmt(m.best) });
   if (t.blocks.some(b => b.rows.some(isEst))) cols.push({ head: 'Écart estimations', get: m => m.gap == null ? '—' : round1(m.gap) + ' s' });
-  if (hasTime) cols.push({ head: 'Écart fractions', get: m => m.pace == null ? '—' : round1(m.pace) + ' s' });
+  if (hasTime) cols.push({ head: 'Écart 200 m (régularité)', get: m => m.pace == null ? '—' : round1(m.pace) + ' s' });
   return cols;
 }
 function classesUsing(t) { return state.classes.filter(c => state.scans.some(x => x.classId === c.id && x.templateId === t.id) || (t.printedFor || []).some(p => p.classId === c.id)).sort((a, b) => a.name.localeCompare(b.name, 'fr', { numeric: true })).map(c => c.id); }
@@ -484,14 +529,24 @@ function renderResults() {
   if (!t) { $('resultHead').innerHTML = ''; $('resultRows').innerHTML = ''; $('progress').textContent = 'Ajoute d’abord une fiche depuis la Bibliothèque.'; return; }
   const students = resultStudents(c, t);
   const cols = resultColumns(t); let validated = 0, pending = 0, autoOk = 0;
-  $('resultHead').innerHTML = '<tr><th>Élève</th>' + cols.map(x => '<th>' + escapeHtml(x.head) + '</th>').join('') + '<th>État</th><th>Action</th></tr>';
+  const B = BAREMES[t.bareme];
+  const gHead = B ? '<th>F/G</th><th>Perf. /6</th><th>Régul. /6</th><th>AFL1 /12</th><th>Choix AFL2/AFL3</th><th>AFL2 /2</th><th>AFL3 /2</th><th>Note /20</th>' : '';
+  $('resultHead').innerHTML = '<tr><th>Élève</th>' + cols.map(x => '<th>' + escapeHtml(x.head) + '</th>').join('') + gHead + '<th>État</th><th>Action</th></tr>';
   $('resultRows').innerHTML = students.map(s => {
     const all = state.scans.filter(x => x.studentId === s.id && x.templateId === t.id), r = latestScan(s.id, t.id), m = r ? metrics(t, r.values) : null, st = scanState(r);
     if (st === 'validated') validated++; else if (st === 'auto') autoOk++; else if (r) pending++;
-    return '<tr><td>' + (c === '*' ? '<span class="muted">' + escapeHtml(className(s.classId)) + '</span> ' : '') + escapeHtml(s.name) + (all.length > 1 ? ' (' + all.length + ' fiches)' : '') + '</td>' + cols.map(x => '<td>' + (m ? escapeHtml(x.get(m, r.values, x.bi)) : '—') + '</td>').join('') + '<td><span class="pill ' + ({ validated: 'ok', auto: 'auto', check: 'warn' }[st] || '') + '">' + ({ validated: 'Validé', auto: 'Lu ✓ à valider', check: 'À vérifier ⚠' }[st] || 'Non scanné') + '</span></td><td>' + (r ? '<button class="secondary" onclick="editScan(\'' + r.id + '\')">Ouvrir</button>' : '—') + '</td></tr>';
+    return '<tr><td>' + (c === '*' ? '<span class="muted">' + escapeHtml(className(s.classId)) + '</span> ' : '') + escapeHtml(s.name) + (all.length > 1 ? ' (' + all.length + ' fiches)' : '') + '</td>' + cols.map(x => '<td>' + (m ? escapeHtml(x.get(m, r.values, x.bi)) : '—') + '</td>').join('') + (B ? gradeCells(t, s, m) : '') + '<td><span class="pill ' + ({ validated: 'ok', auto: 'auto', check: 'warn' }[st] || '') + '">' + ({ validated: 'Validé', auto: 'Lu ✓ à valider', check: 'À vérifier ⚠' }[st] || 'Non scanné') + '</span></td><td>' + (r ? '<button class="secondary" onclick="editScan(\'' + r.id + '\')">Ouvrir</button>' : '—') + '</td></tr>';
   }).join('');
   $('progress').textContent = students.length + ' élèves · ' + validated + ' validés · ' + autoOk + ' lus sans alerte · ' + pending + ' à vérifier · ' + (students.length - validated - pending - autoOk) + ' non scannés';
   $('validateAutoBtn').disabled = !autoOk;
+}
+function gradeCells(t, s, m) {
+  const g = grade(t, s, m), on = k => 'onchange="setNote(\'' + s.id + '\',\'' + t.id + '\',\'' + k + '\',this.value)"', n = (s.notes || {})[t.id] || {};
+  const inp = (k, val, ph) => '<input style="width:62px;padding:6px" inputmode="decimal" value="' + (val ?? '') + '" placeholder="' + ph + '" ' + on(k) + '>';
+  return '<td><select style="padding:6px" ' + on('sex') + '><option value="">?</option><option value="F"' + (s.sex === 'F' ? ' selected' : '') + '>F</option><option value="G"' + (s.sex === 'G' ? ' selected' : '') + '>G</option></select></td>' +
+    '<td>' + (g.noSex && m ? '<span class="muted">F/G ?</span>' : nf(g.perf)) + '</td><td>' + nf(g.reg) + '</td><td><b>' + nf(g.afl1) + '</b></td>' +
+    '<td><select style="padding:6px" ' + on('choix') + '>' + Object.keys(CHOIX).map(k => '<option' + (g.choix === k ? ' selected' : '') + ' value="' + k + '">' + k.replace('-', ' / ') + '</option>').join('') + '</select></td>' +
+    '<td>' + inp('afl2', n.afl2, g.afl2s == null ? '' : nf(g.afl2s)) + '</td><td>' + inp('afl3', n.afl3, '') + '</td><td><b>' + nf(g.total) + '</b></td>';
 }
 async function validateAuto() {
   const c = $('resultClass').value, tid = $('resultTpl').value;
@@ -504,11 +559,12 @@ function download(name, text, type) { const a = document.createElement('a'), url
 function exportCSV() {
   const c = $('resultClass').value, t = tplById($('resultTpl').value); if (!t) return;
   const rows = t.blocks.flatMap(b => b.rows.map(r => ({ r, head: (b.title ? b.title + ' · ' : '') + r.label })));
-  const lines = [['Élève', 'Statut', ...rows.map(x => x.head), 'Meilleur', 'Écart estimations (s)', 'Écart fractions (s)']];
+  const B = BAREMES[t.bareme];
+  const lines = [['Élève', 'Statut', ...rows.map(x => x.head), 'Meilleur', 'Écart estimations (s)', 'Écart 200 m (s)', ...(B ? ['Sexe', 'Perf /6', 'Régularité /6', 'AFL1 /12', 'Choix AFL2/AFL3', 'AFL2 /2', 'AFL3 /2', 'Note /20'] : [])]];
   lines[0].unshift('Classe');
   for (const s of resultStudents(c, t)) {
     const r = latestScan(s.id, t.id), m = r ? metrics(t, r.values) : null;
-    lines.push([className(s.classId), s.name, r ? ({ validated: 'validé', auto: 'lu, à valider', check: 'à vérifier' }[scanState(r)]) : 'non scanné', ...rows.map(x => r?.values[x.r.id] ?? ''), m ? fmt(m.best).replace('—', '') : '', m?.gap == null ? '' : round1(m.gap), m?.pace == null ? '' : round1(m.pace)]);
+    lines.push([className(s.classId), s.name, r ? ({ validated: 'validé', auto: 'lu, à valider', check: 'à vérifier' }[scanState(r)]) : 'non scanné', ...rows.map(x => r?.values[x.r.id] ?? ''), m ? fmt(m.best).replace('—', '') : '', m?.gap == null ? '' : round1(m.gap), m?.pace == null ? '' : round1(m.pace), ...(B ? (g => [s.sex || '', g.perf ?? '', g.reg ?? '', g.afl1 ?? '', g.choix, g.afl2 ?? '', g.afl3 ?? '', g.total ?? ''])(grade(t, s, m)) : [])]);
   }
   const slug = t.name.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/gi, '-').toLowerCase();
   download('resultats-' + slug + '-' + (c === '*' ? 'toutes-classes' : className(c).replace(/\s+/g, '')) + '.csv', '﻿' + lines.map(row => row.map(x => '"' + String(x ?? '').replace(/"/g, '""') + '"').join(';')).join('\r\n'), 'text/csv;charset=utf-8');
@@ -519,14 +575,17 @@ function resultsHTML(t, cid) {
   const cols = resultColumns(t), rows = t.blocks.flatMap(b => b.rows.map(r => ({ r, head: (b.title ? b.title + ' · ' : '') + r.label })));
   const lab = { validated: 'Validé', auto: 'Lu, à valider', check: 'À vérifier' };
   let v = 0, rd = 0;
+  const B = BAREMES[t.bareme];
   const main = students.map(s => {
-    const r = latestScan(s.id, t.id), m = r ? metrics(t, r.values) : null, st = scanState(r);
+    const r = latestScan(s.id, t.id), m = r ? metrics(t, r.values) : null, st = scanState(r), g = B ? grade(t, s, m) : null;
     if (r) rd++; if (st === 'validated') v++;
-    return '<tr><td>' + escapeHtml(s.name) + '</td>' + cols.map(x => '<td>' + (m ? escapeHtml(x.get(m, r.values, x.bi)) : '—') + '</td>').join('') + '<td class="st ' + (st || 'none') + '">' + (lab[st] || 'Non scanné') + '</td></tr>';
+    const gc = g ? [s.sex || '?', nf(g.perf), nf(g.reg), '<b>' + nf(g.afl1) + '</b>', g.choix.replace('-', ' / '), nf(g.afl2) + (g.afl2Prop && g.afl2 != null ? '*' : ''), nf(g.afl3), '<b>' + nf(g.total) + '</b>'].map(x => '<td>' + x + '</td>').join('') : '';
+    return '<tr><td>' + escapeHtml(s.name) + '</td>' + cols.map(x => '<td>' + (m ? escapeHtml(x.get(m, r.values, x.bi)) : '—') + '</td>').join('') + gc + '<td class="st ' + (st || 'none') + '">' + (lab[st] || 'Non scanné') + '</td></tr>';
   }).join('');
+  const gh = B ? ['F/G', 'Perf. /6', 'Régul. /6', 'AFL1 /12', 'Choix AFL2/AFL3', 'AFL2 /2', 'AFL3 /2', 'Note /20'].map(x => '<th>' + x + '</th>').join('') : '';
   const detail = students.map(s => { const r = latestScan(s.id, t.id); return '<tr><td>' + escapeHtml(s.name) + '</td>' + rows.map(x => '<td>' + escapeHtml(r?.values[x.r.id] ?? '') + '</td>').join('') + '</tr>'; }).join('');
   return '<section><h2>' + escapeHtml(className(cid)) + '</h2><p class="sub">' + students.length + ' élèves · ' + rd + ' fiches lues · ' + v + ' validées</p>' +
-    '<table><thead><tr><th>Élève</th>' + cols.map(x => '<th>' + escapeHtml(x.head) + '</th>').join('') + '<th>État</th></tr></thead><tbody>' + main + '</tbody></table>' +
+    '<table><thead><tr><th>Élève</th>' + cols.map(x => '<th>' + escapeHtml(x.head) + '</th>').join('') + gh + '<th>État</th></tr></thead><tbody>' + main + '</tbody></table>' + (B ? '<p class="sub">' + escapeHtml(B.name) + ' · AFL2 et AFL3 sur 2 points, coefficientés selon le choix de l’élève (4/4 : ×2 et ×2 · 6/2 : ×3 et ×1 · 2/6 : ×1 et ×3). * AFL2 proposé d’après les écarts cumulés estimation/réalisation.</p>' : '') +
     '<details><summary>Détail de toutes les valeurs</summary><table class="small"><thead><tr><th>Élève</th>' + rows.map(x => '<th>' + escapeHtml(x.head) + '</th>').join('') + '</tr></thead><tbody>' + detail + '</tbody></table></details></section>';
 }
 function exportHTML() {
