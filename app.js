@@ -33,31 +33,32 @@ const BAREMES = {
     afl2: [[8, 2], [15, 1.5], [25, 1]]
   }
 };
-const CHOIX = { '4-4': [2, 2], '6-2': [3, 1], '2-6': [1, 3] };
+const CHOIX = { '2-6': [2, 6], '4-4': [4, 4], '6-2': [6, 2] }; // points max AFL2 / AFL3 selon le choix de l'élève
 function perfPts(table, t) { let p = 0; table.forEach((lim, i) => { if (t <= lim + 0.001) p = (i + 1) * 0.25; }); return p; }
 function regulPts(B, e) { if (e < 4) return 6; for (let i = B.regul.length - 1; i >= 0; i--) if (e <= B.regul[i][0]) return B.regul[i][1]; return 0; }
 function afl2Pts(B, g) { for (const [lim, p] of B.afl2) if (g <= lim) return p; return 0.5; }
 function grade(t, s, m) {
   const B = BAREMES[t.bareme]; if (!B) return null;
-  const n = (s.notes || {})[t.id] || {}, choix = CHOIX[n.choix] ? n.choix : '4-4', [c2, c3] = CHOIX[choix];
+  const n = (s.notes || {})[t.id] || {}, has = v => v !== undefined && v !== null && v !== '';
+  const choix = CHOIX[n.choix] ? n.choix : null, [max2, max3] = choix ? CHOIX[choix] : [null, null];
   const perf = m && m.best != null && B.perf[s.sex] ? perfPts(B.perf[s.sex], m.best) : null;
   const reg = m && m.pace != null ? regulPts(B, m.pace) : null;
   const afl1 = perf != null && reg != null ? perf + reg : null;
-  const has = v => v !== undefined && v !== null && v !== '';
-  const est = m && m.gap != null ? afl2Pts(B, m.gap) : null;          // AFL2 · estimer et réguler (temps)
-  const entr = has(n.afl2tr) ? +n.afl2tr : null;                        // AFL2 · s'engager dans les entraînements (prof)
-  const afl2 = est != null && entr != null ? (est + entr) / 2 : null;   // AFL2 /2
-  const afl3 = has(n.afl3) ? +n.afl3 : null;                            // AFL3 /2 (rôle)
-  const p2 = afl2 != null ? afl2 * c2 : null, p3 = afl3 != null ? afl3 * c3 : null;
+  const dEst = m && m.gap != null ? Math.round(afl2Pts(B, m.gap) * 2) : null;                     // AFL2 · estimer (temps) : degré 1-4
+  const dEntr = has(n.d2tr) ? +n.d2tr : has(n.afl2tr) ? Math.round(n.afl2tr * 2) : null;        // AFL2 · s'entraîner : degré 1-4 (prof)
+  const d3 = has(n.d3) ? +n.d3 : has(n.afl3) ? Math.round(n.afl3 * 2) : null;                    // AFL3 · rôle : degré 1-4 (prof)
+  const p2 = max2 && dEst != null && dEntr != null ? (dEst + dEntr) / 2 * max2 / 4 : null;
+  const p3 = max3 && d3 != null ? d3 * max3 / 4 : null;
   const total = afl1 != null && p2 != null && p3 != null ? afl1 + p2 + p3 : null;
   const acquired = [afl1, p2, p3].reduce((a, v) => a + (v || 0), 0);
-  return { perf, reg, afl1, est, entr, afl2, afl3, p2, p3, role: n.role || '', choix, c2, c3, total, acquired, noSex: !B.perf[s.sex] };
+  const missing = [!s.sex && 'F/G', !m && 'fiche', !choix && 'choix', dEntr == null && 'entraînement', d3 == null && 'AFL3'].filter(Boolean);
+  return { perf, reg, afl1, dEst, dEntr, d3, p2, p3, max2, max3, role: n.role || '', choix, total, acquired, missing, noSex: !B.perf[s.sex], best: m?.best, pace: m?.pace, gap: m?.gap };
 }
 const nf = v => v == null ? '—' : String(Math.round(v * 100) / 100).replace('.', ',');
 async function setNote(sid, tid, k, v) {
   const s = state.students.find(x => x.id === sid); if (!s) return;
-  if (k === 'sex') s.sex = v || undefined;
-  else { s.notes = s.notes || {}; s.notes[tid] = s.notes[tid] || {}; s.notes[tid][k] = v === '' ? '' : (k === 'choix' || k === 'role' ? v : Math.max(0, Math.min(2, parseFloat(String(v).replace(',', '.')) || 0))); }
+  if (k === 'sex') s.sex = s.sex === v ? undefined : (v || undefined);
+  else { s.notes = s.notes || {}; s.notes[tid] = s.notes[tid] || {}; const cur = s.notes[tid][k]; s.notes[tid][k] = String(cur) === String(v) ? '' : v; if (k === 'd2tr') delete s.notes[tid].afl2tr; if (k === 'd3') delete s.notes[tid].afl3; }
   await persist(); renderResults();
 }
 const schoolYear = () => { const d = new Date(), y = d.getFullYear(); return d.getMonth() >= 7 ? y + '-' + (y + 1) : (y - 1) + '-' + y; };
@@ -147,9 +148,14 @@ async function renameClass(id) { const c = state.classes.find(x => x.id === id);
 async function renameFolder(f) { const n = prompt('Nouveau nom du dossier :', f); if (!n || !n.trim()) return; state.classes.forEach(c => { if (c.folder === f) c.folder = n.trim(); }); await persist(); render(); }
 async function deleteClass(id) {
   const c = state.classes.find(x => x.id === id);
-  if (state.scans.some(x => x.classId === id)) return alert('Des fiches lues sont liées à cette classe : suppression impossible. Tu peux la déplacer dans un dossier « Archives ».');
-  if (!confirm('Supprimer la classe ' + c.name + ' et sa liste d’élèves ?')) return;
+  if (!c) return;
+  const nsc = state.scans.filter(x => x.classId === id).length, nst = state.students.filter(s => s.classId === id).length;
+  if (!confirm('Supprimer la classe ' + c.name + ' ?\n\n' + nst + ' élève(s)' + (nsc ? ', ' + nsc + ' fiche(s) lue(s) et leurs notes' : '') + ' seront effacés de cet appareil.' + (nsc ? '\nPense à exporter l’archive avant si tu veux garder une trace.' : ''))) return;
+  if (nsc && !confirm('Confirmer la suppression définitive de ' + c.name + ' ?')) return;
+  const ids = new Set(state.students.filter(s => s.classId === id).map(s => s.id));
+  state.scans = state.scans.filter(x => x.classId !== id && !ids.has(x.studentId));
   state.classes = state.classes.filter(x => x.id !== id); state.students = state.students.filter(s => s.classId !== id); state.queue = state.queue.filter(q => q.classId !== id);
+  state.templates.forEach(t => { t.printedFor = (t.printedFor || []).filter(p => p.classId !== id); });
   await persist(); render();
 }
 
@@ -540,37 +546,52 @@ function renderResults() {
   const students = resultStudents(c, t);
   const cols = resultColumns(t); let validated = 0, pending = 0, autoOk = 0;
   const B = BAREMES[t.bareme];
-  if (B) $('resultHead').innerHTML = gradeHead(cols, true);
+  $('santorinBtn').classList.toggle('hidden', !B);
+  $('resultsTable').classList.toggle('gt', !!B);
+  if (B) $('resultHead').innerHTML = gradeHead(true);
   else $('resultHead').innerHTML = '<tr><th>Élève</th>' + cols.map(x => '<th>' + escapeHtml(x.head) + '</th>').join('') + '<th>État</th><th>Action</th></tr>';
   $('resultRows').innerHTML = students.map(s => {
     const all = state.scans.filter(x => x.studentId === s.id && x.templateId === t.id), r = latestScan(s.id, t.id), m = r ? metrics(t, r.values) : null, st = scanState(r);
     if (st === 'validated') validated++; else if (st === 'auto') autoOk++; else if (r) pending++;
-    return '<tr><td>' + (c === '*' ? '<span class="muted">' + escapeHtml(className(s.classId)) + '</span> ' : '') + escapeHtml(s.name) + (all.length > 1 ? ' (' + all.length + ' fiches)' : '') + '</td>' + cols.map(x => '<td>' + (m ? escapeHtml(x.get(m, r.values, x.bi)) : '—') + '</td>').join('') + (B ? gradeCells(t, s, m) : '') + '<td><span class="pill ' + ({ validated: 'ok', auto: 'auto', check: 'warn' }[st] || '') + '">' + ({ validated: 'Validé', auto: 'Lu ✓ à valider', check: 'À vérifier ⚠' }[st] || 'Non scanné') + '</span></td><td>' + (r ? '<button class="secondary" onclick="editScan(\'' + r.id + '\')">Ouvrir</button>' : '—') + '</td></tr>';
+    if (B) return gradeRow(t, s, r, m, st, true, c === '*');
+    return '<tr><td>' + (c === '*' ? '<span class="muted">' + escapeHtml(className(s.classId)) + '</span> ' : '') + escapeHtml(s.name) + (all.length > 1 ? ' (' + all.length + ' fiches)' : '') + '</td>' + cols.map(x => '<td>' + (m ? escapeHtml(x.get(m, r.values, x.bi)) : '—') + '</td>').join('') + '<td><span class="pill ' + ({ validated: 'ok', auto: 'auto', check: 'warn' }[st] || '') + '">' + ({ validated: 'Validé', auto: 'Lu ✓ à valider', check: 'À vérifier ⚠' }[st] || 'Non scanné') + '</span></td><td>' + (r ? '<button class="secondary" onclick="editScan(\'' + r.id + '\')">Ouvrir</button>' : '—') + '</td></tr>';
   }).join('');
   $('progress').textContent = students.length + ' élèves · ' + validated + ' validés · ' + autoOk + ' lus sans alerte · ' + pending + ' à vérifier · ' + (students.length - validated - pending - autoOk) + ' non scannés';
   $('validateAutoBtn').disabled = !autoOk;
 }
-const DEG = [['', '—'], ['0.5', 'D1 · 0,5'], ['1', 'D2 · 1'], ['1.5', 'D3 · 1,5'], ['2', 'D4 · 2']];
-function gradeHead(cols, screen) {
-  const rs = ' rowspan="2"', grp = 'style="text-align:center;border-left:2px solid #9fb6cf"';
-  return '<tr><th' + rs + '>Élève</th>' + cols.map(x => '<th' + rs + '>' + escapeHtml(x.head) + '</th>').join('') + '<th' + rs + '>F/G</th>' +
-    '<th colspan="3" ' + grp + '>AFL1 · performance (auto)</th><th' + rs + ' ' + grp + '>Choix AFL2 / AFL3</th>' +
-    '<th colspan="3" ' + grp + '>AFL2 · s’entraîner</th><th colspan="3" ' + grp + '>AFL3 · rôle</th><th' + rs + ' ' + grp + '>Note /20</th><th' + rs + '>État</th>' + (screen ? '<th' + rs + '>Action</th>' : '') + '</tr>' +
-    '<tr><th style="border-left:2px solid #9fb6cf">Perf. /6</th><th>Régul. /6</th><th>AFL1 /12</th>' +
-    '<th style="border-left:2px solid #9fb6cf">Estimation /2 (auto)</th><th>Entraînement /2</th><th>Points</th>' +
-    '<th style="border-left:2px solid #9fb6cf">Rôle</th><th>Degré /2</th><th>Points</th></tr>';
+const GRADE_CSS = '.gt{border-collapse:collapse;width:100%;min-width:980px}.gt th,.gt td{border:1px solid #d5e0ea;padding:6px 7px;text-align:center;vertical-align:middle;font-size:14px}.gt td.nm{text-align:left;min-width:150px}.gt th{background:#edf3fa}.gt .a1{background:#e6f3fc}.gt .a2{background:#edf6e4}.gt .a3{background:#fff8d6}.gt th.a1{background:#8cc8ef}.gt th.a2{background:#a9cf86}.gt th.a3{background:#f3dd5e}.gt th.a1s{background:#cfe8f9}.gt th.a2s{background:#d6eac4}.gt th.a3s{background:#faeea6}.gt .sub{font-size:11px;color:#5a6f85;display:block;margin-top:2px}.gt .big{font-size:18px;font-weight:800}.gt .of{font-size:12px;color:#5a6f85}.gt .note{font-size:22px;font-weight:900;color:#123d66}.seg{display:inline-flex;border:1px solid #9fb6cf;border-radius:9px;overflow:hidden;background:#fff}.seg button{background:#fff;color:#18314c;border:0;border-left:1px solid #d5e0ea;padding:5px 7px;border-radius:0;font-size:13px;line-height:1.15;min-height:0;min-width:34px}.seg button:first-child{border-left:0}.seg button{white-space:nowrap}.seg button.on{background:#123d66;color:#fff}.seg button small{display:block;font-size:10px;opacity:.75}.deg{display:inline-block;background:#123d66;color:#fff;border-radius:6px;padding:2px 6px;font-weight:700}.miss{font-size:11px;color:#b83246;display:block}';
+(() => { const st = document.createElement('style'); st.textContent = GRADE_CSS; document.head.appendChild(st); })();
+const ROLE = { P: 'Partenaire', S: 'Starter / chrono' };
+function gradeHead(screen) {
+  return '<tr><th rowspan="2">Élève</th><th rowspan="2">F/G</th><th rowspan="2">Choix<br>AFL2-AFL3</th><th colspan="3" class="a1">AFL1 · Produire une performance /12</th><th colspan="3" class="a2">AFL2 · S’entraîner</th><th colspan="3" class="a3">AFL3 · Assumer un rôle</th><th rowspan="2">Note<br>/20</th></tr>' +
+    '<tr><th class="a1s">Performance /6<span class="sub">meilleur 800 m</span></th><th class="a1s">Régularité /6<span class="sub">écart des 200 m</span></th><th class="a1s">AFL1</th>' +
+    '<th class="a2s">Estimer et réguler<span class="sub">auto · écarts cumulés</span></th><th class="a2s">S’entraîner<span class="sub">degré 1 à 4</span></th><th class="a2s">AFL2</th>' +
+    '<th class="a3s">Rôle</th><th class="a3s">Degré<span class="sub">1 à 4</span></th><th class="a3s">AFL3</th></tr>';
 }
-function gradeCells(t, s, m) {
-  const g = grade(t, s, m), on = k => 'onchange="setNote(\'' + s.id + '\',\'' + t.id + '\',\'' + k + '\',this.value)"', n = (s.notes || {})[t.id] || {};
-  const sel = (k, opts, val) => '<select style="padding:6px" ' + on(k) + '>' + opts.map(([v, l]) => '<option value="' + v + '"' + (String(val ?? '') === v ? ' selected' : '') + '>' + l + '</option>').join('') + '</select>';
-  const L = 'style="border-left:2px solid #9fb6cf"';
-  return '<td>' + sel('sex', [['', '?'], ['F', 'F'], ['G', 'G']], s.sex) + '</td>' +
-    '<td ' + L + '>' + (g.noSex && m ? '<span class="muted">F/G ?</span>' : nf(g.perf)) + '</td><td>' + nf(g.reg) + '</td><td><b>' + nf(g.afl1) + '</b></td>' +
-    '<td ' + L + '>' + sel('choix', Object.keys(CHOIX).map(k => [k, k.replace('-', ' / ')]), g.choix) + '</td>' +
-    '<td ' + L + '>' + nf(g.est) + '</td><td>' + sel('afl2tr', DEG, n.afl2tr) + '</td><td><b>' + nf(g.p2) + '</b><span class="muted"> /' + 2 * g.c2 + '</span></td>' +
-    '<td ' + L + '>' + sel('role', [['', '—'], ['P', 'Partenaire'], ['S', 'Starter / chrono']], n.role) + '</td><td>' + sel('afl3', DEG, n.afl3) + '</td><td><b>' + nf(g.p3) + '</b><span class="muted"> /' + 2 * g.c3 + '</span></td>' +
-    '<td ' + L + '>' + (g.total != null ? '<b>' + nf(g.total) + '</b>' : '<span class="muted">' + nf(g.acquired) + ' acquis</span>') + '</td>';
+function gradeRow(t, s, r, m, st, screen, showClass) {
+  const g = grade(t, s, m), seg = (k, opts, cur) => '<span class="seg">' + opts.map(([v, l]) => '<button class="' + (String(cur ?? '') === String(v) ? 'on' : '') + '" onclick="setNote(\'' + s.id + '\',\'' + t.id + '\',\'' + k + '\',\'' + v + '\')">' + l + '</button>').join('') + '</span>';
+  const degBtns = (k, cur, max) => seg(k, [1, 2, 3, 4].map(d => [d, (max ? nf(d * max / 4) : 'D' + d) + (max ? '<small>D' + d + '</small>' : '')]), cur);
+  const degTxt = (d, max) => d == null ? '—' : '<span class="deg">D' + d + '</span>' + (max ? ' ' + nf(d * max / 4) : '');
+  const lab = { validated: 'Validé', auto: 'Lu, à valider', check: 'À vérifier' }, pill = { validated: 'ok', auto: 'auto', check: 'warn' };
+  const finals = m ? m.blocks.filter(b => b.hasTime).map(b => fmt(b.final)).join(' · ') : '';
+  const name = '<td class="nm"><b>' + escapeHtml(s.name) + '</b>' + (showClass ? ' <span class="of">' + escapeHtml(className(s.classId)) + '</span>' : '') + '<span class="sub">' + (finals ? '800 m : ' + finals : 'non scanné') + '</span>' +
+    (screen ? '<span class="sub"><span class="pill ' + (pill[st] || '') + '">' + (lab[st] || 'Non scanné') + '</span>' + (r ? ' <button class="mini" onclick="editScan(\'' + r.id + '\')">Ouvrir</button>' : '') + '</span>' : '') + '</td>';
+  const tot = (v, max) => '<span class="big">' + nf(v) + '</span>' + (max ? '<span class="of"> /' + max + '</span>' : '');
+  return '<tr>' + name +
+    '<td>' + (screen ? seg('sex', [['F', 'F'], ['G', 'G']], s.sex) : (s.sex || '?')) + '</td>' +
+    '<td>' + (screen ? seg('choix', Object.keys(CHOIX).map(k => [k, k]), g.choix) : (g.choix || '—')) + '</td>' +
+    '<td class="a1">' + (g.noSex && m ? '<span class="miss">F/G ?</span>' : '<b>' + nf(g.perf) + '</b>') + '<span class="sub">' + (g.best != null ? fmt(g.best) : '') + '</span></td>' +
+    '<td class="a1"><b>' + nf(g.reg) + '</b><span class="sub">' + (g.pace != null ? round1(g.pace) + ' s' : '') + '</span></td>' +
+    '<td class="a1">' + tot(g.afl1, 12) + '</td>' +
+    '<td class="a2">' + degTxt(g.dEst, g.max2) + '<span class="sub">' + (g.gap != null ? 'écart ' + round1(g.gap) + ' s' : '') + '</span></td>' +
+    '<td class="a2">' + (screen ? degBtns('d2tr', g.dEntr, g.max2) : degTxt(g.dEntr, g.max2)) + '</td>' +
+    '<td class="a2">' + tot(g.p2, g.max2) + '</td>' +
+    '<td class="a3">' + (screen ? seg('role', [['P', 'Partenaire'], ['S', 'Chrono']], g.role) : (ROLE[g.role] || '—')) + '</td>' +
+    '<td class="a3">' + (screen ? degBtns('d3', g.d3, g.max3) : degTxt(g.d3, g.max3)) + '</td>' +
+    '<td class="a3">' + tot(g.p3, g.max3) + '</td>' +
+    '<td>' + (g.total != null ? '<span class="note">' + nf(g.total) + '</span>' : '<span class="of">' + nf(g.acquired) + ' acquis</span><span class="miss">manque : ' + g.missing.join(', ') + '</span>') + '</td></tr>';
 }
+function splitName(full) { const tk = String(full).trim().split(/\s+/); let i = 0; while (i < tk.length - 1 && /\p{Lu}/u.test(tk[i]) && tk[i] === tk[i].toLocaleUpperCase('fr')) i++; if (i === 0) i = 1; return [tk.slice(0, i).join(' '), tk.slice(i).join(' ')]; }
 async function validateAuto() {
   const c = $('resultClass').value, tid = $('resultTpl').value;
   const list = resultStudents(c, tplById(tid)).map(s => latestScan(s.id, tid)).filter(r => scanState(r) === 'auto');
@@ -583,11 +604,11 @@ function exportCSV() {
   const c = $('resultClass').value, t = tplById($('resultTpl').value); if (!t) return;
   const rows = t.blocks.flatMap(b => b.rows.map(r => ({ r, head: (b.title ? b.title + ' · ' : '') + r.label })));
   const B = BAREMES[t.bareme];
-  const lines = [['Élève', 'Statut', ...rows.map(x => x.head), 'Meilleur', 'Écart estimations (s)', 'Écart 200 m (s)', ...(B ? ['Sexe', 'AFL1 Perf /6', 'AFL1 Régularité /6', 'AFL1 /12', 'Choix AFL2/AFL3', 'AFL2 Estimation /2', 'AFL2 Entraînement /2', 'AFL2 points', 'AFL3 Rôle', 'AFL3 Degré /2', 'AFL3 points', 'Note /20'] : [])]];
+  const lines = [['Élève', 'Statut', ...rows.map(x => x.head), 'Meilleur', 'Écart estimations (s)', 'Écart 200 m (s)', ...(B ? ['Sexe', 'AFL1 Performance /6', 'AFL1 Régularité /6', 'AFL1 /12', 'Choix AFL2-AFL3', 'AFL2 Estimation (degré)', 'AFL2 Entraînement (degré)', 'AFL2 points', 'AFL3 Rôle', 'AFL3 (degré)', 'AFL3 points', 'Note /20'] : [])]];
   lines[0].unshift('Classe');
   for (const s of resultStudents(c, t)) {
     const r = latestScan(s.id, t.id), m = r ? metrics(t, r.values) : null;
-    lines.push([className(s.classId), s.name, r ? ({ validated: 'validé', auto: 'lu, à valider', check: 'à vérifier' }[scanState(r)]) : 'non scanné', ...rows.map(x => r?.values[x.r.id] ?? ''), m ? fmt(m.best).replace('—', '') : '', m?.gap == null ? '' : round1(m.gap), m?.pace == null ? '' : round1(m.pace), ...(B ? (g => [s.sex || '', g.perf ?? '', g.reg ?? '', g.afl1 ?? '', g.choix, g.est ?? '', g.entr ?? '', g.p2 ?? '', { P: 'Partenaire', S: 'Starter/chrono' }[g.role] || '', g.afl3 ?? '', g.p3 ?? '', g.total ?? ''])(grade(t, s, m)) : [])]);
+    lines.push([className(s.classId), s.name, r ? ({ validated: 'validé', auto: 'lu, à valider', check: 'à vérifier' }[scanState(r)]) : 'non scanné', ...rows.map(x => r?.values[x.r.id] ?? ''), m ? fmt(m.best).replace('—', '') : '', m?.gap == null ? '' : round1(m.gap), m?.pace == null ? '' : round1(m.pace), ...(B ? (g => [s.sex || '', g.perf ?? '', g.reg ?? '', g.afl1 ?? '', g.choix || '', g.dEst ?? '', g.dEntr ?? '', g.p2 ?? '', ROLE[g.role] || '', g.d3 ?? '', g.p3 ?? '', g.total ?? ''])(grade(t, s, m)) : [])]);
   }
   const slug = t.name.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/gi, '-').toLowerCase();
   download('resultats-' + slug + '-' + (c === '*' ? 'toutes-classes' : className(c).replace(/\s+/g, '')) + '.csv', '﻿' + lines.map(row => row.map(x => '"' + String(x ?? '').replace(/"/g, '""') + '"').join(';')).join('\r\n'), 'text/csv;charset=utf-8');
@@ -602,24 +623,45 @@ function resultsHTML(t, cid) {
   const main = students.map(s => {
     const r = latestScan(s.id, t.id), m = r ? metrics(t, r.values) : null, st = scanState(r), g = B ? grade(t, s, m) : null;
     if (r) rd++; if (st === 'validated') v++;
-    const roleL = { P: 'Partenaire', S: 'Starter / chrono' };
-    const gc = g ? [s.sex || '?', nf(g.perf), nf(g.reg), '<b>' + nf(g.afl1) + '</b>', g.choix.replace('-', ' / '), nf(g.est), nf(g.entr), '<b>' + nf(g.p2) + '</b> /' + 2 * g.c2, roleL[g.role] || '—', nf(g.afl3), '<b>' + nf(g.p3) + '</b> /' + 2 * g.c3, g.total != null ? '<b>' + nf(g.total) + '</b>' : nf(g.acquired) + ' acquis'].map(x => '<td>' + x + '</td>').join('') : '';
+    if (B) return gradeRow(t, s, r, m, st, false, false);
+    const gc = '';
     return '<tr><td>' + escapeHtml(s.name) + '</td>' + cols.map(x => '<td>' + (m ? escapeHtml(x.get(m, r.values, x.bi)) : '—') + '</td>').join('') + gc + '<td class="st ' + (st || 'none') + '">' + (lab[st] || 'Non scanné') + '</td></tr>';
   }).join('');
 
-  const detail = students.map(s => { const r = latestScan(s.id, t.id); return '<tr><td>' + escapeHtml(s.name) + '</td>' + rows.map(x => '<td>' + escapeHtml(r?.values[x.r.id] ?? '') + '</td>').join('') + '</tr>'; }).join('');
+  const detail = students.map(s => { const r = latestScan(s.id, t.id), m = r ? metrics(t, r.values) : null, st = scanState(r); return '<tr><td>' + escapeHtml(s.name) + '</td>' + rows.map(x => '<td>' + escapeHtml(r?.values[x.r.id] ?? '') + '</td>').join('') + '<td>' + (m ? fmt(m.best) : '') + '</td><td>' + (m?.gap != null ? round1(m.gap) + ' s' : '') + '</td><td>' + (m?.pace != null ? round1(m.pace) + ' s' : '') + '</td><td class="st ' + (st || 'none') + '">' + (lab[st] || 'Non scanné') + '</td></tr>'; }).join('');
   return '<section><h2>' + escapeHtml(className(cid)) + '</h2><p class="sub">' + students.length + ' élèves · ' + rd + ' fiches lues · ' + v + ' validées</p>' +
-    '<table><thead>' + (B ? gradeHead(cols, false) : '<tr><th>Élève</th>' + cols.map(x => '<th>' + escapeHtml(x.head) + '</th>').join('') + '<th>État</th></tr>') + '</thead><tbody>' + main + '</tbody></table>' + (B ? '<p class="sub">' + escapeHtml(B.name) + '. AFL1 /12 = performance /6 (meilleur 800 m) + régularité /6 (écart entre le 200 m le plus rapide et le plus lent). AFL2 /2 = moyenne de « estimer ses performances » (écarts cumulés, calculé) et « s’engager dans les entraînements ». AFL2 et AFL3 coefficientés selon le choix de l’élève (4/4 : ×2 et ×2 · 6/2 : ×3 et ×1 · 2/6 : ×1 et ×3).</p>' : '') +
-    '<details><summary>Détail de toutes les valeurs</summary><table class="small"><thead><tr><th>Élève</th>' + rows.map(x => '<th>' + escapeHtml(x.head) + '</th>').join('') + '</tr></thead><tbody>' + detail + '</tbody></table></details></section>';
+    '<table' + (B ? ' class="gt"' : '') + '><thead>' + (B ? gradeHead(false) : '<tr><th>Élève</th>' + cols.map(x => '<th>' + escapeHtml(x.head) + '</th>').join('') + '<th>État</th></tr>') + '</thead><tbody>' + main + '</tbody></table>' + (B ? '<h3>Temps relevés</h3>' : '<details><summary>Détail de toutes les valeurs</summary>') + '<table class="small"><thead><tr><th>Élève</th>' + rows.map(x => '<th>' + escapeHtml(x.head) + '</th>').join('') + '<th>Meilleur</th><th>Écarts estimation</th><th>Écart des 200 m</th><th>État</th></tr></thead><tbody>' + detail + '</tbody></table>' + (B ? '' : '</details>') + '</section>';
 }
 function exportHTML() {
   const t = tplById($('resultTpl').value); if (!t) return;
   const all = $('resultClass').value === '*', cids = all ? classesUsing(t) : [$('resultClass').value];
   if (!cids.length) return alert('Aucune classe n’a encore utilisé cette fiche.');
   const date = new Date().toLocaleDateString('fr-FR');
-  const css = 'body{font-family:system-ui,-apple-system,sans-serif;color:#18314c;margin:24px}h1{margin:0 0 4px;color:#123d66}h2{margin:26px 0 2px;color:#123d66}.sub{color:#5a6f85;margin:0 0 10px}table{border-collapse:collapse;width:100%;margin:6px 0 10px}th,td{border:1px solid #d5e0ea;padding:6px 8px;text-align:left;font-size:14px}th{background:#edf3fa}.small td,.small th{font-size:12px}tr:nth-child(even) td{background:#fafcfe}.st.validated{color:#16683d;font-weight:600}.st.check{color:#855500;font-weight:600}.st.auto{color:#124f8a}.st.none{color:#999}summary{cursor:pointer;color:#1267a5;margin:4px 0}@media print{details{display:none}section{break-inside:avoid-page}section+section{break-before:page}}';
-  const doc = '<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' + escapeHtml(t.name) + ' — résultats</title><style>' + css + '</style></head><body><h1>' + escapeHtml(t.name) + '</h1><p class="sub">Résultats · exporté le ' + date + ' · ScanDocument EPS</p>' + cids.map(c => resultsHTML(t, c)).join('') + '</body></html>';
-  download('resultats-' + slug(t.name) + '-' + (all ? 'toutes-classes' : slug(className(cids[0]))) + '.html', doc, 'text/html;charset=utf-8');
+  const B = BAREMES[t.bareme];
+  const css = GRADE_CSS + '.gt .seg,.gt button{display:none}body{font-family:system-ui,-apple-system,sans-serif;color:#18314c;margin:24px}h1{margin:0 0 4px;color:#123d66}h2{margin:26px 0 2px;color:#123d66}.sub{color:#5a6f85;margin:0 0 10px}table{border-collapse:collapse;width:100%;margin:6px 0 10px}th,td{border:1px solid #d5e0ea;padding:6px 8px;text-align:left;font-size:14px}th{background:#edf3fa}.small td,.small th{font-size:12px}tr:nth-child(even) td{background:#fafcfe}.st.validated{color:#16683d;font-weight:600}.st.check{color:#855500;font-weight:600}.st.auto{color:#124f8a}.st.none{color:#999}summary{cursor:pointer;color:#1267a5;margin:4px 0}@media print{details{display:none}section{break-inside:avoid-page}section+section{break-before:page}}';
+  const doc = '<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' + escapeHtml(t.name) + ' — archive</title><style>' + css + '</style></head><body><h1>' + escapeHtml(t.name) + '</h1><p class="sub">Archive complète · exportée le ' + date + ' · ScanDocument EPS' + (B ? ' · ' + escapeHtml(B.name) : '') + '</p>' + cids.map(c => resultsHTML(t, c)).join('') + (B ? baremeLegend(B) : '') + '</body></html>';
+  download('archive-' + slug(t.name) + '-' + (all ? 'toutes-classes' : slug(className(cids[0]))) + '.html', doc, 'text/html;charset=utf-8');
+}
+
+function baremeLegend(B) {
+  const row = (lab, cells, cls) => '<tr><th class="' + cls + '">' + lab + '</th>' + cells.map(c => '<td>' + c + '</td>').join('') + '</tr>';
+  return '<section><h2>Rappel du barème</h2><table class="gt" style="min-width:0;width:auto"><thead><tr><th>Points max</th><th>Degré 1</th><th>Degré 2</th><th>Degré 3</th><th>Degré 4</th></tr></thead><tbody>' +
+    [[2, 'a1s'], [4, 'a2s'], [6, 'a3s']].map(([n, c]) => row('/' + n, [1, 2, 3, 4].map(d => nf(d * n / 4)), c)).join('') + '</tbody></table>' +
+    '<p class="sub">Choix de l’élève : 2-6 (AFL2 /2, AFL3 /6) · 4-4 (AFL2 /4, AFL3 /4) · 6-2 (AFL2 /6, AFL3 /2). AFL1 /12 = performance /6 (meilleur des deux 800 m, table fille/garçon) + régularité /6 (écart entre le 200 m le plus rapide et le plus lent des deux 800 m). AFL2 = moyenne des degrés « estimer et réguler » (écarts cumulés entre temps annoncés et réalisés : ≤ 8 s D4, 9-15 s D3, 16-25 s D2, > 25 s D1) et « s’entraîner ».</p></section>';
+}
+function exportSantorin() {
+  const t = tplById($('resultTpl').value); if (!t || !BAREMES[t.bareme]) return;
+  const all = $('resultClass').value === '*', cids = all ? classesUsing(t) : [$('resultClass').value];
+  if (!cids.length) return alert('Aucune classe n’a encore utilisé cette fiche.');
+  const css = 'body{font-family:system-ui,-apple-system,sans-serif;color:#18314c;margin:24px}h1{margin:0;color:#123d66}h2{color:#123d66;margin:28px 0 8px}p{color:#5a6f85}table{border-collapse:collapse;min-width:640px}th,td{border:1px solid #c9d6e3;padding:9px 12px;font-size:17px;text-align:center}td.l{text-align:left}th{background:#edf3fa}.a1{background:#e6f3fc}.a2{background:#edf6e4}.a3{background:#fff8d6}th.a1{background:#8cc8ef}th.a2{background:#a9cf86}th.a3{background:#f3dd5e}.n{font-weight:900;font-size:19px}.vide{background:#fde8eb!important}@media print{section+section{break-before:page}}';
+  const sec = cid => {
+    const studs = state.students.filter(s => s.classId === cid).sort((a, b) => a.name.localeCompare(b.name, 'fr'));
+    const rows = studs.map(s => { const r = latestScan(s.id, t.id), m = r ? metrics(t, r.values) : null, g = grade(t, s, m), [nom, pre] = splitName(s.name), c = (v, cls) => '<td class="' + cls + (v == null ? ' vide' : '') + '">' + (v == null ? '' : nf(v)) + '</td>';
+      return '<tr><td class="l"><b>' + escapeHtml(nom) + '</b></td><td class="l">' + escapeHtml(pre) + '</td><td' + (g.choix ? '' : ' class="vide"') + '>' + (g.choix || '') + '</td>' + c(g.afl1, 'a1') + c(g.p2, 'a2') + c(g.p3, 'a3') + c(g.total, 'n') + '</tr>'; }).join('');
+    return '<section><h2>' + escapeHtml(className(cid)) + '</h2><table><thead><tr><th>Nom</th><th>Prénom</th><th>Choix AFL</th><th class="a1">AFL1 /12</th><th class="a2">AFL2</th><th class="a3">AFL3</th><th>Note /20</th></tr></thead><tbody>' + rows + '</tbody></table></section>';
+  };
+  const doc = '<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Santorin — ' + escapeHtml(t.name) + '</title><style>' + css + '</style></head><body><h1>Saisie Santorin · ' + escapeHtml(t.name) + '</h1><p>Exporté le ' + new Date().toLocaleDateString('fr-FR') + ' · cases rouges = à compléter avant la saisie.</p>' + cids.map(sec).join('') + '</body></html>';
+  download('santorin-' + slug(t.name) + '-' + (all ? 'toutes-classes' : slug(className(cids[0]))) + '.html', doc, 'text/html;charset=utf-8');
 }
 
 /* ---------- Sauvegarde ---------- */

@@ -50,8 +50,8 @@
 
 <section id="results" class="panel hidden"><button class="back" onclick="view('home')">← Accueil</button><h2>📊 Résultats</h2>
 <div class="flex"><select id="resultTpl" onchange="renderResults()"></select><select id="resultClass" onchange="renderResults()"></select></div><p id="progress"></p>
-<div class="flex"><button id="validateAutoBtn" onclick="validateAuto()">✓ Valider les fiches lues sans alerte</button><button class="secondary" onclick="exportHTML()">📄 Exporter le tableau (HTML)</button><button class="linkbtn" onclick="exportCSV()">CSV</button></div>
-<div class="tablewrap" style="margin-top:10px"><table><thead id="resultHead"></thead><tbody id="resultRows"></tbody></table></div></section>
+<div class="flex"><button id="validateAutoBtn" onclick="validateAuto()">✓ Valider les fiches lues sans alerte</button><button class="secondary" onclick="exportHTML()">📄 Archive complète (HTML)</button><button id="santorinBtn" class="secondary hidden" onclick="exportSantorin()">🎓 Export Santorin (HTML)</button><button class="linkbtn" onclick="exportCSV()">CSV</button></div>
+<div class="tablewrap" style="margin-top:10px"><table id="resultsTable"><thead id="resultHead"></thead><tbody id="resultRows"></tbody></table></div></section>
 
 <section id="backup" class="panel hidden"><button class="back" onclick="view('home')">← Accueil</button><h2>⚙ Sauvegarde</h2><p>Tout est enregistré sur cet appareil uniquement. Fais une sauvegarde de temps en temps (classes, fiches, résultats et photos).</p><div class="flex"><button onclick="backup()">Télécharger la sauvegarde</button><label class="btn secondary" style="background:#e3ebf5;color:#123d66">Restaurer une sauvegarde<input style="display:none" type="file" accept=".json,application/json" onchange="restore(event)"></label></div><p class="muted">Données d'élèves : à faire valider par l'établissement (RGPD).</p></section>
 </main>
