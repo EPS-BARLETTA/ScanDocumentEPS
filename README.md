@@ -2,28 +2,35 @@
 
 Application web mobile/iPad pour le suivi des fiches de demi-fond **2 × 800 m**.
 
-## Version initiale
+## Fonctionnement
 
-- Création de classes et ajout/import CSV des élèves
-- Photographie d'une fiche A5 par élève
-- Saisie des temps en regard de la photographie
-- Validation individuelle et détection d'incohérences de chronométrage
-- Suivi des élèves validés, à vérifier ou non scannés
-- Tableau récapitulatif et export CSV
-- Sauvegarde et restauration JSON (avec photos)
+1. **Mes classes** : créer la classe, importer le CSV PRONOTE (colonne « Élèves »).
+2. **🖨 Fiches nominatives de la classe** : une fiche A5 par élève, avec son nom et un QR code (2 fiches par feuille A4, à couper). Imprimer en taille réelle. Des **fiches de secours** vierges sont aussi disponibles.
+3. Pendant la course, l'observateur écrit chaque temps dans la case puis noircit une bulle par colonne (minutes · 1er chiffre des secondes · 2e chiffre).
+4. **Scanner** : photographier ou importer les fiches entières, dans n'importe quel ordre. Chaque photo est lue sur l'appareil :
+   - les 4 carrés noirs servent à redresser la fiche ;
+   - le QR code identifie l'élève ;
+   - les bulles donnent les temps.
+5. **Résultats** : les fiches lues sans alerte apparaissent en « Lu ✓ à valider » et se valident d'un coup. Les autres sont « À vérifier ⚠ » avec la raison (deux bulles dans une colonne, ligne incomplète, case « corr. » cochée, temps incohérents…) et la photo à côté pour corriger.
+6. Export CSV et sauvegarde JSON.
 
-## Utilisation
+## Erreurs prévues
 
-Ouvrir `index.html` dans un navigateur moderne, ou activer GitHub Pages sur la branche `main` à la racine du dépôt.
+| Situation | Ce que fait l'appli |
+|---|---|
+| Deux bulles ou aucune dans une colonne | Fiche « À vérifier », comparer avec le temps écrit |
+| Élève qui s'est trompé | Il noircit la case « corr. » et écrit le bon temps à côté : fiche « À vérifier » |
+| Passages incohérents | Alerte (passage plus petit que le précédent) |
+| QR illisible, fiche de secours | Fiche gardée dans « Fiches à traiter », choisir l'élève à la main |
+| Même élève photographié deux fois | La lecture non validée est remplacée ; si une fiche validée existe, alerte |
+| Repères non trouvés | Message pour reprendre la photo |
 
-Créer une classe, importer la liste des élèves, puis scanner les fiches. Les temps des 200 m sont des **passages cumulés**. L'écart entre le 200 m le plus rapide et le plus lent est calculé à partir des huit durées de fraction. Les écarts estimation/réalisation sont additionnés en valeur absolue.
+## Technique
 
-## Limites et sécurité
+Aucun serveur : tout tourne dans le navigateur, hors connexion après la première ouverture.
+- `fiche.js` : gabarit de la fiche, génération SVG, lecture (seuillage adaptatif, repères, homographie, lecture des bulles).
+- `lib/qrcode.js` (qrcode-generator, MIT) et `lib/jsQR.js` (jsQR, Apache-2.0).
 
-**La reconnaissance automatique de l'écriture manuscrite n'est pas encore implémentée.** Les valeurs doivent être saisies et contrôlées manuellement à partir des photos. Ne pas confondre ce prototype avec un système OCR opérationnel.
+## Données et RGPD
 
-Les données sont enregistrées localement dans IndexedDB. La sauvegarde JSON contient les photos et les noms. Ne pas utiliser de données réelles d'élèves avant validation par l'établissement des règles de sécurité, de conservation et de conformité RGPD. GitHub Pages héberge uniquement le code, pas les résultats.
-
-## Suite
-
-Étudier une solution de reconnaissance manuscrite adaptée au gabarit fixe, avec contrôle humain obligatoire et traitement conforme aux règles de protection des données.
+Les données sont enregistrées localement dans IndexedDB. Les photos ne quittent pas l'appareil. Le QR code ne contient pas le nom, seulement un identifiant interne. La sauvegarde JSON contient les photos et les noms. Faire valider l'usage de données réelles par l'établissement. GitHub Pages héberge uniquement le code, pas les résultats.
