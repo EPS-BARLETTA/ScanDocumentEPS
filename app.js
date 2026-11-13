@@ -43,17 +43,21 @@ function grade(t, s, m) {
   const perf = m && m.best != null && B.perf[s.sex] ? perfPts(B.perf[s.sex], m.best) : null;
   const reg = m && m.pace != null ? regulPts(B, m.pace) : null;
   const afl1 = perf != null && reg != null ? perf + reg : null;
-  const afl2s = m && m.gap != null ? afl2Pts(B, m.gap) : null;
   const has = v => v !== undefined && v !== null && v !== '';
-  const afl2 = has(n.afl2) ? +n.afl2 : afl2s, afl3 = has(n.afl3) ? +n.afl3 : null;
-  const total = afl1 != null && afl2 != null && afl3 != null ? afl1 + afl2 * c2 + afl3 * c3 : null;
-  return { perf, reg, afl1, afl2s, afl2, afl3, choix, c2, c3, total, afl2Prop: !has(n.afl2), noSex: !B.perf[s.sex] };
+  const est = m && m.gap != null ? afl2Pts(B, m.gap) : null;          // AFL2 · estimer et réguler (temps)
+  const entr = has(n.afl2tr) ? +n.afl2tr : null;                        // AFL2 · s'engager dans les entraînements (prof)
+  const afl2 = est != null && entr != null ? (est + entr) / 2 : null;   // AFL2 /2
+  const afl3 = has(n.afl3) ? +n.afl3 : null;                            // AFL3 /2 (rôle)
+  const p2 = afl2 != null ? afl2 * c2 : null, p3 = afl3 != null ? afl3 * c3 : null;
+  const total = afl1 != null && p2 != null && p3 != null ? afl1 + p2 + p3 : null;
+  const acquired = [afl1, p2, p3].reduce((a, v) => a + (v || 0), 0);
+  return { perf, reg, afl1, est, entr, afl2, afl3, p2, p3, role: n.role || '', choix, c2, c3, total, acquired, noSex: !B.perf[s.sex] };
 }
 const nf = v => v == null ? '—' : String(Math.round(v * 100) / 100).replace('.', ',');
 async function setNote(sid, tid, k, v) {
   const s = state.students.find(x => x.id === sid); if (!s) return;
   if (k === 'sex') s.sex = v || undefined;
-  else { s.notes = s.notes || {}; s.notes[tid] = s.notes[tid] || {}; s.notes[tid][k] = v === '' ? '' : (k === 'choix' ? v : Math.max(0, Math.min(2, parseFloat(String(v).replace(',', '.')) || 0))); }
+  else { s.notes = s.notes || {}; s.notes[tid] = s.notes[tid] || {}; s.notes[tid][k] = v === '' ? '' : (k === 'choix' || k === 'role' ? v : Math.max(0, Math.min(2, parseFloat(String(v).replace(',', '.')) || 0))); }
   await persist(); renderResults();
 }
 const schoolYear = () => { const d = new Date(), y = d.getFullYear(); return d.getMonth() >= 7 ? y + '-' + (y + 1) : (y - 1) + '-' + y; };
@@ -182,8 +186,13 @@ async function importRoster(e) {
   const headings = parse(header, sep).map(x => x.toLocaleLowerCase('fr').normalize('NFD').replace(/[̀-ͯ]/g, ''));
   const nameCol = headings.findIndex(x => ['eleves', 'eleve', 'nom prenom', 'nom et prenom'].includes(x)), surnameCol = headings.findIndex(x => x === 'nom'), firstnameCol = headings.findIndex(x => x === 'prenom');
   const classCol = headings.findIndex(x => x === 'classe' || x === 'classes' || x === 'division');
-  const sexCol = headings.findIndex(x => ['sexe', 'genre', 'sex', 'fille/garcon'].includes(x));
-  const sexOfCell = v => { v = String(v || '').trim().toUpperCase(); return /^(F|FILLE|FEMININ|FÉMININ)/.test(v) ? 'F' : /^(M|G|GARCON|GARÇON|MASCULIN|H)/.test(v) ? 'G' : undefined; };
+  const sexOfCell = v => { v = String(v || '').trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, ''); return /^(F|FILLE|FEMININ|FEMME)$/.test(v) ? 'F' : /^(M|G|GARCON|MASCULIN|H|HOMME)$/.test(v) ? 'G' : undefined; };
+  let sexCol = headings.findIndex(x => /^(sexe|genre|sex|fille\/garcon|f\/g)$/.test(x));
+  if (sexCol < 0) { // pas d'en-tête reconnu : colonne dont presque toutes les valeurs sont F/M/G/Fille/Garçon
+    const data = lines.slice(1, 60).map(l => parse(l, sep));
+    const ncol = Math.max(0, ...data.map(r => r.length));
+    for (let k = 0; k < ncol && sexCol < 0; k++) { const vals = data.map(r => r[k]).filter(Boolean); if (vals.length >= 2 && vals.filter(v => sexOfCell(v)).length / vals.length > 0.9) sexCol = k; }
+  }
   const hasHeader = nameCol >= 0 || surnameCol >= 0; let n = 0; const created = [];
   if (classCol < 0 && !c) { e.target.value = ''; return alert('Crée d’abord une classe, ou importe un fichier avec une colonne « Classe »'); }
   const folder = $('classFolder').value.trim() || schoolYear();
@@ -201,7 +210,8 @@ async function importRoster(e) {
     const ex = state.students.find(s => s.classId === c && s.name.toLocaleLowerCase('fr') === name.toLocaleLowerCase('fr'));
     if (name && !ex) { state.students.push({ id: uid(), classId: c, name, sex: sx }); n++; } else if (ex && sx && !ex.sex) ex.sex = sx;
   }
-  await persist(); e.target.value = ''; render(); alert(n + ' élèves importés (noms et prénoms uniquement)' + (created.length ? '\n' + created.length + ' classe(s) créée(s) dans « ' + folder + ' » : ' + created.join(', ') : ''));
+  const nsex = sexCol >= 0 ? state.students.filter(s => s.sex).length : 0;
+  await persist(); e.target.value = ''; render(); alert(n + ' élèves importés' + (sexCol >= 0 ? ' · fille/garçon renseigné' : ' · colonne Sexe non trouvée : fille/garçon à indiquer') + (created.length ? '\n' + created.length + ' classe(s) créée(s) dans « ' + folder + ' » : ' + created.join(', ') : ''));
 }
 function removeStudent(id) { if (state.scans.some(x => x.studentId === id)) return alert('Élève lié à une fiche : suppression bloquée'); if (confirm('Supprimer cet élève ?')) { state.students = state.students.filter(x => x.id !== id); persist(); render(); } }
 
@@ -530,8 +540,8 @@ function renderResults() {
   const students = resultStudents(c, t);
   const cols = resultColumns(t); let validated = 0, pending = 0, autoOk = 0;
   const B = BAREMES[t.bareme];
-  const gHead = B ? '<th>F/G</th><th>Perf. /6</th><th>Régul. /6</th><th>AFL1 /12</th><th>Choix AFL2/AFL3</th><th>AFL2 /2</th><th>AFL3 /2</th><th>Note /20</th>' : '';
-  $('resultHead').innerHTML = '<tr><th>Élève</th>' + cols.map(x => '<th>' + escapeHtml(x.head) + '</th>').join('') + gHead + '<th>État</th><th>Action</th></tr>';
+  if (B) $('resultHead').innerHTML = gradeHead(cols, true);
+  else $('resultHead').innerHTML = '<tr><th>Élève</th>' + cols.map(x => '<th>' + escapeHtml(x.head) + '</th>').join('') + '<th>État</th><th>Action</th></tr>';
   $('resultRows').innerHTML = students.map(s => {
     const all = state.scans.filter(x => x.studentId === s.id && x.templateId === t.id), r = latestScan(s.id, t.id), m = r ? metrics(t, r.values) : null, st = scanState(r);
     if (st === 'validated') validated++; else if (st === 'auto') autoOk++; else if (r) pending++;
@@ -540,13 +550,26 @@ function renderResults() {
   $('progress').textContent = students.length + ' élèves · ' + validated + ' validés · ' + autoOk + ' lus sans alerte · ' + pending + ' à vérifier · ' + (students.length - validated - pending - autoOk) + ' non scannés';
   $('validateAutoBtn').disabled = !autoOk;
 }
+const DEG = [['', '—'], ['0.5', 'D1 · 0,5'], ['1', 'D2 · 1'], ['1.5', 'D3 · 1,5'], ['2', 'D4 · 2']];
+function gradeHead(cols, screen) {
+  const rs = ' rowspan="2"', grp = 'style="text-align:center;border-left:2px solid #9fb6cf"';
+  return '<tr><th' + rs + '>Élève</th>' + cols.map(x => '<th' + rs + '>' + escapeHtml(x.head) + '</th>').join('') + '<th' + rs + '>F/G</th>' +
+    '<th colspan="3" ' + grp + '>AFL1 · performance (auto)</th><th' + rs + ' ' + grp + '>Choix AFL2 / AFL3</th>' +
+    '<th colspan="3" ' + grp + '>AFL2 · s’entraîner</th><th colspan="3" ' + grp + '>AFL3 · rôle</th><th' + rs + ' ' + grp + '>Note /20</th><th' + rs + '>État</th>' + (screen ? '<th' + rs + '>Action</th>' : '') + '</tr>' +
+    '<tr><th style="border-left:2px solid #9fb6cf">Perf. /6</th><th>Régul. /6</th><th>AFL1 /12</th>' +
+    '<th style="border-left:2px solid #9fb6cf">Estimation /2 (auto)</th><th>Entraînement /2</th><th>Points</th>' +
+    '<th style="border-left:2px solid #9fb6cf">Rôle</th><th>Degré /2</th><th>Points</th></tr>';
+}
 function gradeCells(t, s, m) {
   const g = grade(t, s, m), on = k => 'onchange="setNote(\'' + s.id + '\',\'' + t.id + '\',\'' + k + '\',this.value)"', n = (s.notes || {})[t.id] || {};
-  const inp = (k, val, ph) => '<input style="width:62px;padding:6px" inputmode="decimal" value="' + (val ?? '') + '" placeholder="' + ph + '" ' + on(k) + '>';
-  return '<td><select style="padding:6px" ' + on('sex') + '><option value="">?</option><option value="F"' + (s.sex === 'F' ? ' selected' : '') + '>F</option><option value="G"' + (s.sex === 'G' ? ' selected' : '') + '>G</option></select></td>' +
-    '<td>' + (g.noSex && m ? '<span class="muted">F/G ?</span>' : nf(g.perf)) + '</td><td>' + nf(g.reg) + '</td><td><b>' + nf(g.afl1) + '</b></td>' +
-    '<td><select style="padding:6px" ' + on('choix') + '>' + Object.keys(CHOIX).map(k => '<option' + (g.choix === k ? ' selected' : '') + ' value="' + k + '">' + k.replace('-', ' / ') + '</option>').join('') + '</select></td>' +
-    '<td>' + inp('afl2', n.afl2, g.afl2s == null ? '' : nf(g.afl2s)) + '</td><td>' + inp('afl3', n.afl3, '') + '</td><td><b>' + nf(g.total) + '</b></td>';
+  const sel = (k, opts, val) => '<select style="padding:6px" ' + on(k) + '>' + opts.map(([v, l]) => '<option value="' + v + '"' + (String(val ?? '') === v ? ' selected' : '') + '>' + l + '</option>').join('') + '</select>';
+  const L = 'style="border-left:2px solid #9fb6cf"';
+  return '<td>' + sel('sex', [['', '?'], ['F', 'F'], ['G', 'G']], s.sex) + '</td>' +
+    '<td ' + L + '>' + (g.noSex && m ? '<span class="muted">F/G ?</span>' : nf(g.perf)) + '</td><td>' + nf(g.reg) + '</td><td><b>' + nf(g.afl1) + '</b></td>' +
+    '<td ' + L + '>' + sel('choix', Object.keys(CHOIX).map(k => [k, k.replace('-', ' / ')]), g.choix) + '</td>' +
+    '<td ' + L + '>' + nf(g.est) + '</td><td>' + sel('afl2tr', DEG, n.afl2tr) + '</td><td><b>' + nf(g.p2) + '</b><span class="muted"> /' + 2 * g.c2 + '</span></td>' +
+    '<td ' + L + '>' + sel('role', [['', '—'], ['P', 'Partenaire'], ['S', 'Starter / chrono']], n.role) + '</td><td>' + sel('afl3', DEG, n.afl3) + '</td><td><b>' + nf(g.p3) + '</b><span class="muted"> /' + 2 * g.c3 + '</span></td>' +
+    '<td ' + L + '>' + (g.total != null ? '<b>' + nf(g.total) + '</b>' : '<span class="muted">' + nf(g.acquired) + ' acquis</span>') + '</td>';
 }
 async function validateAuto() {
   const c = $('resultClass').value, tid = $('resultTpl').value;
@@ -560,11 +583,11 @@ function exportCSV() {
   const c = $('resultClass').value, t = tplById($('resultTpl').value); if (!t) return;
   const rows = t.blocks.flatMap(b => b.rows.map(r => ({ r, head: (b.title ? b.title + ' · ' : '') + r.label })));
   const B = BAREMES[t.bareme];
-  const lines = [['Élève', 'Statut', ...rows.map(x => x.head), 'Meilleur', 'Écart estimations (s)', 'Écart 200 m (s)', ...(B ? ['Sexe', 'Perf /6', 'Régularité /6', 'AFL1 /12', 'Choix AFL2/AFL3', 'AFL2 /2', 'AFL3 /2', 'Note /20'] : [])]];
+  const lines = [['Élève', 'Statut', ...rows.map(x => x.head), 'Meilleur', 'Écart estimations (s)', 'Écart 200 m (s)', ...(B ? ['Sexe', 'AFL1 Perf /6', 'AFL1 Régularité /6', 'AFL1 /12', 'Choix AFL2/AFL3', 'AFL2 Estimation /2', 'AFL2 Entraînement /2', 'AFL2 points', 'AFL3 Rôle', 'AFL3 Degré /2', 'AFL3 points', 'Note /20'] : [])]];
   lines[0].unshift('Classe');
   for (const s of resultStudents(c, t)) {
     const r = latestScan(s.id, t.id), m = r ? metrics(t, r.values) : null;
-    lines.push([className(s.classId), s.name, r ? ({ validated: 'validé', auto: 'lu, à valider', check: 'à vérifier' }[scanState(r)]) : 'non scanné', ...rows.map(x => r?.values[x.r.id] ?? ''), m ? fmt(m.best).replace('—', '') : '', m?.gap == null ? '' : round1(m.gap), m?.pace == null ? '' : round1(m.pace), ...(B ? (g => [s.sex || '', g.perf ?? '', g.reg ?? '', g.afl1 ?? '', g.choix, g.afl2 ?? '', g.afl3 ?? '', g.total ?? ''])(grade(t, s, m)) : [])]);
+    lines.push([className(s.classId), s.name, r ? ({ validated: 'validé', auto: 'lu, à valider', check: 'à vérifier' }[scanState(r)]) : 'non scanné', ...rows.map(x => r?.values[x.r.id] ?? ''), m ? fmt(m.best).replace('—', '') : '', m?.gap == null ? '' : round1(m.gap), m?.pace == null ? '' : round1(m.pace), ...(B ? (g => [s.sex || '', g.perf ?? '', g.reg ?? '', g.afl1 ?? '', g.choix, g.est ?? '', g.entr ?? '', g.p2 ?? '', { P: 'Partenaire', S: 'Starter/chrono' }[g.role] || '', g.afl3 ?? '', g.p3 ?? '', g.total ?? ''])(grade(t, s, m)) : [])]);
   }
   const slug = t.name.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/gi, '-').toLowerCase();
   download('resultats-' + slug + '-' + (c === '*' ? 'toutes-classes' : className(c).replace(/\s+/g, '')) + '.csv', '﻿' + lines.map(row => row.map(x => '"' + String(x ?? '').replace(/"/g, '""') + '"').join(';')).join('\r\n'), 'text/csv;charset=utf-8');
@@ -579,13 +602,14 @@ function resultsHTML(t, cid) {
   const main = students.map(s => {
     const r = latestScan(s.id, t.id), m = r ? metrics(t, r.values) : null, st = scanState(r), g = B ? grade(t, s, m) : null;
     if (r) rd++; if (st === 'validated') v++;
-    const gc = g ? [s.sex || '?', nf(g.perf), nf(g.reg), '<b>' + nf(g.afl1) + '</b>', g.choix.replace('-', ' / '), nf(g.afl2) + (g.afl2Prop && g.afl2 != null ? '*' : ''), nf(g.afl3), '<b>' + nf(g.total) + '</b>'].map(x => '<td>' + x + '</td>').join('') : '';
+    const roleL = { P: 'Partenaire', S: 'Starter / chrono' };
+    const gc = g ? [s.sex || '?', nf(g.perf), nf(g.reg), '<b>' + nf(g.afl1) + '</b>', g.choix.replace('-', ' / '), nf(g.est), nf(g.entr), '<b>' + nf(g.p2) + '</b> /' + 2 * g.c2, roleL[g.role] || '—', nf(g.afl3), '<b>' + nf(g.p3) + '</b> /' + 2 * g.c3, g.total != null ? '<b>' + nf(g.total) + '</b>' : nf(g.acquired) + ' acquis'].map(x => '<td>' + x + '</td>').join('') : '';
     return '<tr><td>' + escapeHtml(s.name) + '</td>' + cols.map(x => '<td>' + (m ? escapeHtml(x.get(m, r.values, x.bi)) : '—') + '</td>').join('') + gc + '<td class="st ' + (st || 'none') + '">' + (lab[st] || 'Non scanné') + '</td></tr>';
   }).join('');
-  const gh = B ? ['F/G', 'Perf. /6', 'Régul. /6', 'AFL1 /12', 'Choix AFL2/AFL3', 'AFL2 /2', 'AFL3 /2', 'Note /20'].map(x => '<th>' + x + '</th>').join('') : '';
+
   const detail = students.map(s => { const r = latestScan(s.id, t.id); return '<tr><td>' + escapeHtml(s.name) + '</td>' + rows.map(x => '<td>' + escapeHtml(r?.values[x.r.id] ?? '') + '</td>').join('') + '</tr>'; }).join('');
   return '<section><h2>' + escapeHtml(className(cid)) + '</h2><p class="sub">' + students.length + ' élèves · ' + rd + ' fiches lues · ' + v + ' validées</p>' +
-    '<table><thead><tr><th>Élève</th>' + cols.map(x => '<th>' + escapeHtml(x.head) + '</th>').join('') + gh + '<th>État</th></tr></thead><tbody>' + main + '</tbody></table>' + (B ? '<p class="sub">' + escapeHtml(B.name) + ' · AFL2 et AFL3 sur 2 points, coefficientés selon le choix de l’élève (4/4 : ×2 et ×2 · 6/2 : ×3 et ×1 · 2/6 : ×1 et ×3). * AFL2 proposé d’après les écarts cumulés estimation/réalisation.</p>' : '') +
+    '<table><thead>' + (B ? gradeHead(cols, false) : '<tr><th>Élève</th>' + cols.map(x => '<th>' + escapeHtml(x.head) + '</th>').join('') + '<th>État</th></tr>') + '</thead><tbody>' + main + '</tbody></table>' + (B ? '<p class="sub">' + escapeHtml(B.name) + '. AFL1 /12 = performance /6 (meilleur 800 m) + régularité /6 (écart entre le 200 m le plus rapide et le plus lent). AFL2 /2 = moyenne de « estimer ses performances » (écarts cumulés, calculé) et « s’engager dans les entraînements ». AFL2 et AFL3 coefficientés selon le choix de l’élève (4/4 : ×2 et ×2 · 6/2 : ×3 et ×1 · 2/6 : ×1 et ×3).</p>' : '') +
     '<details><summary>Détail de toutes les valeurs</summary><table class="small"><thead><tr><th>Élève</th>' + rows.map(x => '<th>' + escapeHtml(x.head) + '</th>').join('') + '</tr></thead><tbody>' + detail + '</tbody></table></details></section>';
 }
 function exportHTML() {
