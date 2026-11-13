@@ -1,5 +1,5 @@
 // Mode hors connexion : la version en ligne est prioritaire, la copie locale sert de secours.
-const CACHE = 'scan-eps-v17';
+const CACHE = 'scan-eps-v18';
 const FILES = ['./', './index.html', './fiche.js', './app.js', './lib/qrcode.js', './lib/jsQR.js', './manifest.webmanifest'];
 
 self.addEventListener('install', e => {
