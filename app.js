@@ -555,22 +555,23 @@ function renderBatchProgress() {
   const tpls = state.templates.filter(t => (t.printedFor || []).some(p => p.classId === c) || state.scans.some(x => x.classId === c && x.templateId === t.id));
   box.innerHTML = tpls.map(t => {
     const disp = studs.filter(s => ((s.notes || {})[t.id] || {}).disp).length, total = studs.length - disp, done = studs.filter(s => !((s.notes || {})[t.id] || {}).disp && latestScan(s.id, t.id)).length, pct = total ? Math.round(done / total * 100) : 0;
-    return '<div class="prog"><div class="flex"><b class="grow">' + escapeHtml(t.name) + '</b><span><b>' + done + '</b> / ' + total + ' scannée(s)' + (disp ? ' · ' + disp + ' dispensé(s)' : '') + '</span></div><div class="bar"><span style="width:' + pct + '%"></span></div>' + (done < total ? '<span class="muted">Manquent : ' + studs.filter(s => !((s.notes || {})[t.id] || {}).disp && !latestScan(s.id, t.id)).map(s => escapeHtml(s.name)).join(', ') + '</span>' : '<span style="color:#16683d;font-weight:700">✓ Classe complète</span>') + '</div>';
+    return '<div class="prog"><div class="flex"><b class="grow">' + escapeHtml(t.name) + '</b><span><b>' + done + '</b> / ' + total + ' scannée(s)' + (disp ? ' · ' + disp + ' dispensé(s)' : '') + '</span></div><div class="bar"><span style="width:' + pct + '%"></span></div>' + (done < total ? '<span class="muted">Manquent : ' + studs.filter(s => !((s.notes || {})[t.id] || {}).disp && !latestScan(s.id, t.id)).map(s => escapeHtml(s.name)).join(', ') + '</span>' : '<span style="color:#16683d;font-weight:700">✓ Classe complète</span>') + '<div style="margin-top:10px"><button onclick="goResults(\'' + t.id + '\',\'' + c + '\')">📊 Voir les résultats et noter</button></div></div>';
   }).join('') || '<p class="muted">Aucune évaluation imprimée pour cette classe.</p>';
 }
 async function captureBatch(e) {
   const files = [...e.target.files], classId = $('batchClass').value; e.target.value = '';
   if (!classId) return alert('Crée une classe');
-  let auto = 0, manual = 0, lastClass = null; const byTpl = {}; batchBusy = true;
+  let auto = 0, manual = 0, lastClass = null, lastTpl = null; const byTpl = {}; batchBusy = true;
   try {
     for (const [i, file] of files.entries()) {
       $('batchCount').textContent = 'Lecture de la fiche ' + (i + 1) + ' / ' + files.length + '…';
       const read = await readSafe(file), photo = await compressPhoto(file);
-      if (addFromRead(read, photo, classId)) { auto++; const tn = tplById(read.tplId)?.name || '?'; byTpl[tn] = (byTpl[tn] || 0) + 1; const st = state.students.find(x => x.id === read.ref?.id) || state.students.find(x => read.ref?.kind === 'name' && x.name.toLowerCase().startsWith(read.ref.name.toLowerCase())); if (st) lastClass = st.classId; } else manual++;
+      if (addFromRead(read, photo, classId)) { auto++; lastTpl = read.tplId; const tn = tplById(read.tplId)?.name || '?'; byTpl[tn] = (byTpl[tn] || 0) + 1; const st = state.students.find(x => x.id === read.ref?.id) || state.students.find(x => read.ref?.kind === 'name' && x.name.toLowerCase().startsWith(read.ref.name.toLowerCase())); if (st) lastClass = st.classId; } else manual++;
       await persist(); renderBatch();
     }
   } catch (err) { alert('Enregistrement impossible : ' + err.message); }
   batchBusy = false; if (lastClass) $('batchClass').value = lastClass; render();
+  const cta = $('batchDone'); if (cta) { cta.classList.toggle('hidden', !(auto && lastClass && lastTpl)); if (auto && lastClass && lastTpl) cta.innerHTML = '<div><b>✓ Scan terminé</b><span class="muted" style="display:block">' + escapeHtml(className(lastClass)) + ' · ' + escapeHtml(tplById(lastTpl)?.name || '') + '</span></div><button onclick="goResults(\'' + lastTpl + '\',\'' + lastClass + '\')">📊 Voir les résultats et noter →</button>'; }
   $('batchCount').textContent = [Object.keys(byTpl).length ? 'Reconnu : ' + Object.entries(byTpl).map(([n, k]) => k + ' × ' + n + (bar(state.templates.find(t => t.name === n)?.bareme) ? ' (barème : ' + bar(state.templates.find(t => t.name === n).bareme).name + ')' : '')).join(' · ') : '', auto ? '✓ ' + auto + ' fiche(s) lue(s) et rangée(s) dans les Résultats' : '', manual ? manual + ' fiche(s) à vérifier ci-dessous' : ''].filter(Boolean).join(' · ') + '.';
 }
 function valuesSummary(tid, values) { const t = tplById(tid) || LIBRARY.find(l => l.id === tid); if (!t) return Object.values(values).join(' · '); return t.blocks.map(b => (b.title ? b.title + ' : ' : '') + b.rows.map(r => values[r.id] ?? '—').join(' / ')).join(' · '); }
