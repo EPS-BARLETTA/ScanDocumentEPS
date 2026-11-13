@@ -353,6 +353,8 @@
       const { row, y } = R;
       const vals = R.groups.map(g => Array.from({ length: g.n }, (_, k) => sampleDisk(gray, w, h, H, g.x + k * lay.sp, y, lay.r * 0.62)));
       const digits = vals.map(readGroup);
+      // temps sous la minute : colonne « minutes » laissée vide = 0
+      if (row.type === 'time' && digits[0].state === 'empty' && digits[1].state !== 'empty' && digits[2].state !== 'empty') digits[0] = { digit: 0, state: 'ok' };
       const all = vals.flat().sort((a, b) => a - b), med = all[Math.floor(all.length / 2)];
       const corr = sampleDisk(gray, w, h, H, F.corr.x, y, 1.3) < med * 0.8;
       const where = (titles[R.block] ? titles[R.block] + ' · ' : '') + row.label;
