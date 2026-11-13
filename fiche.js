@@ -231,15 +231,66 @@
     return Math.abs(A) / 2;
   }
 
-  function pickMarkers(cands, w, h) {
-    const top = cands.sort((a, b) => b.n - a.n).slice(0, 10);
+  // Coins attendus : quadrilatère proche d'un parallélogramme (photo légèrement en perspective)
+  function quadOK(q) {
+    const c = q.reduce((a, p) => [a[0] + p.x / 4, a[1] + p.y / 4], [0, 0]);
+    const s = q.slice().sort((a, b) => Math.atan2(a.y - c[1], a.x - c[0]) - Math.atan2(b.y - c[1], b.x - c[0]));
+    const diag = Math.max(Math.hypot(s[0].x - s[2].x, s[0].y - s[2].y), Math.hypot(s[1].x - s[3].x, s[1].y - s[3].y));
+    for (let k = 0; k < 4; k++) { // chaque sommet prédit par les trois autres
+      const a = s[(k + 1) % 4], m = s[(k + 2) % 4], b = s[(k + 3) % 4];
+      if (Math.hypot(a.x + b.x - m.x - s[k].x, a.y + b.y - m.y - s[k].y) > 0.16 * diag) return false;
+    }
+    const L = k => Math.hypot(s[k].x - s[(k + 1) % 4].x, s[k].y - s[(k + 1) % 4].y), r = (L(0) + L(2)) / (L(1) + L(3)), ar = Math.min(r, 1 / r);
+    return ar > 0.5 && ar < 0.85;
+  }
+
+  // Cherche autour d'un point le carré le plus contrasté (repère dans l'ombre ou collé au fond)
+  function refineMarker(gray, w, h, px, py, side, radius) {
+    const I = new Float64Array((w + 1) * (h + 1));
+    for (let y = 0; y < h; y++) { let row = 0; for (let x = 0; x < w; x++) { row += gray[y * w + x]; I[(y + 1) * (w + 1) + x + 1] = I[y * (w + 1) + x + 1] + row; } }
+    const box = (x0, y0, x1, y1) => { x0 = Math.max(0, x0); y0 = Math.max(0, y0); x1 = Math.min(w, x1); y1 = Math.min(h, y1); const n = (x1 - x0) * (y1 - y0); if (n <= 0) return [0, 0]; return [I[y1 * (w + 1) + x1] - I[y0 * (w + 1) + x1] - I[y1 * (w + 1) + x0] + I[y0 * (w + 1) + x0], n]; };
+    const hs = Math.max(2, Math.round(side / 2)), ring = Math.max(2, Math.round(side * 0.45)), st = Math.max(1, Math.round(side / 8));
+    let best = null, bs = -1;
+    for (let y = Math.round(py - radius); y <= py + radius; y += st) for (let x = Math.round(px - radius); x <= px + radius; x += st) {
+      const [si, ni] = box(x - hs, y - hs, x + hs, y + hs), [so, no] = box(x - hs - ring, y - hs - ring, x + hs + ring, y + hs + ring);
+      if (!ni || no <= ni) continue;
+      const inner = si / ni, outer = (so - si) / (no - ni), score = outer - inner;
+      if (score > bs) { bs = score; best = { x, y, n: side * side }; }
+    }
+    return best && bs > 25 ? best : null;
+  }
+
+  function pickMarkers(cands, w, h, gray) {
+    const sorted = cands.sort((a, b) => b.n - a.n);
+    // les repères (6 mm) sont les plus gros carrés pleins : on écarte ce qui est nettement plus petit (bulles, QR)
+    const big = sorted.length ? sorted.filter((p, i) => i < 4 || p.n >= 0.45 * sorted[Math.min(2, sorted.length - 1)].n) : [];
+    const top = big.slice(0, 12);
     let best = null, bestA = 0;
     for (let a = 0; a < top.length; a++) for (let b = a + 1; b < top.length; b++) for (let c = b + 1; c < top.length; c++) for (let d = c + 1; d < top.length; d++) {
       const q = [top[a], top[b], top[c], top[d]], ns = q.map(p => p.n);
-      if (Math.min(...ns) < 0.3 * Math.max(...ns)) continue;
-      const A = quadArea(q); if (A > bestA) { bestA = A; best = q; }
+      if (Math.min(...ns) < 0.4 * Math.max(...ns)) continue;
+      const A = quadArea(q); if (A > bestA && quadOK(q)) { bestA = A; best = q; }
     }
-    return best && bestA > 0.04 * w * h ? best : null;
+    if (best && bestA > 0.04 * w * h) return best;
+    if (!gray) return null;
+    // Un repère manquant (ombre, bord) : on part des trois meilleurs, on prédit le quatrième et on le cherche localement
+    let tri = null, triA = 0;
+    for (let a = 0; a < top.length; a++) for (let b = a + 1; b < top.length; b++) for (let c = b + 1; c < top.length; c++) {
+      const t = [top[a], top[b], top[c]], ns = t.map(p => p.n);
+      if (Math.min(...ns) < 0.5 * Math.max(...ns)) continue;
+      for (let k = 0; k < 3; k++) { // k = sommet de l'angle droit
+        const m = t[k], p = t[(k + 1) % 3], q = t[(k + 2) % 3];
+        const v1 = [p.x - m.x, p.y - m.y], v2 = [q.x - m.x, q.y - m.y], l1 = Math.hypot(...v1), l2 = Math.hypot(...v2);
+        const cos = (v1[0] * v2[0] + v1[1] * v2[1]) / (l1 * l2), ar = Math.min(l1, l2) / Math.max(l1, l2);
+        if (Math.abs(cos) > 0.3 || ar < 0.5 || ar > 0.85) continue;
+        const A = l1 * l2 * Math.sqrt(1 - cos * cos);
+        if (A > triA) { triA = A; tri = { m, p, q }; }
+      }
+    }
+    if (!tri || triA < 0.04 * w * h) return null;
+    const { m, p, q } = tri, side = Math.sqrt((m.n + p.n + q.n) / 3), dx = p.x + q.x - m.x, dy = p.y + q.y - m.y;
+    const d = refineMarker(gray, w, h, dx, dy, side, Math.max(side * 1.5, 0.06 * Math.hypot(p.x - q.x, p.y - q.y)));
+    return d ? [m, p, q, d] : null;
   }
 
   function orderMarkers(pts, qrLoc) {
@@ -318,7 +369,7 @@
     const qr = root.jsQR(rgba, w, h, { inversionAttempts: 'dontInvert' });
     if (qr) { res.payload = qr.data; res.ref = parsePayload(qr.data); }
     const gray = toGray(rgba, w, h);
-    const pts = pickMarkers(squareBlobs(binarize(gray, w, h), w, h), w, h);
+    const pts = pickMarkers(squareBlobs(binarize(gray, w, h), w, h), w, h, gray);
     if (!pts) { res.issues.push('Repères introuvables : reprends la photo à plat, les 4 carrés noirs bien visibles'); return res; }
     let ordered = orderMarkers(pts, qr && qr.location);
     let H = null, F = null;
@@ -342,6 +393,7 @@
     if (!H || F.fmt !== lay.fmt) { F = lay.F; H = homography(F.markers, ordered); }
     if (!H) { res.issues.push('Photo trop déformée : reprends-la de face'); return res; }
     res.markers = true;
+    if (opts.debug) res.dbg = { ordered, H, lay };
     if (qr) {
       const [qx, qy] = H(F.qr.x + QR / 2, F.qr.y + QR / 2), loc = qr.location;
       const cx = (loc.topLeftCorner.x + loc.bottomRightCorner.x) / 2, cy = (loc.topLeftCorner.y + loc.bottomRightCorner.y) / 2;
@@ -407,5 +459,5 @@
     return analyse(ctx.getImageData(0, 0, cv.width, cv.height).data, cv.width, cv.height, Object.assign({}, opts, { qrZone }));
   }
 
-  root.Fiche = { FORMATS, layoutFor, ficheSVG, pagesSVG, studentPayload, sparePayload, namePayload, parsePayload, analyse, read };
+  root.Fiche = { _int: { toGray, binarize, squareBlobs, pickMarkers }, FORMATS, layoutFor, ficheSVG, pagesSVG, studentPayload, sparePayload, namePayload, parsePayload, analyse, read };
 })(typeof self !== 'undefined' ? self : globalThis);
