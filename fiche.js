@@ -115,7 +115,7 @@
     }
     o.push(text(14, 38, 3, 'Observateur : ................................'));
     o.push(text(14, 44, 3, 'Date : ......./......./..........'));
-    o.push('<path d="' + qrPath(opts.payload, F.qr) + '" fill="#000"/>');
+    o.push('<path d="' + qrPath(opts.payload, F.qr) + '" fill="' + (opts.qrColor || tpl.qrColor || '#000') + '"/>');
     o.push(text(F.qr.x + QR / 2, F.qr.y + QR + 3, 2, 'ne pas masquer', ' text-anchor="middle" fill="#666"'));
     o.push('<rect x="12" y="47.5" width="' + (F.W - 24) + '" height="15" rx="2" fill="#eef2f8"/>');
     const hasTime = lay.rows.some(r => r.row.type === 'time');
