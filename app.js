@@ -370,7 +370,8 @@ function parseAppleText() {
   out.textContent = (hits.length === 1 ? 'Nom possible : ' + hits[0].name + ' (à confirmer). ' : hits.length > 1 ? 'Plusieurs noms possibles. ' : 'Nom non identifié. ') + 'Temps possibles : ' + (matches.join(' · ') || 'aucun') + '. Reporte-les dans les champs.';
 }
 async function saveScan(validate) {
-  const studentId = $('scanStudent').value; if (!studentId) return alert('Élève non identifié : sélectionne le bon élève avant d’enregistrer.');
+  let studentId = $('scanStudent').value; if (!studentId) return alert('Choisis l’élève dans la liste « Élève » avant d’enregistrer.');
+  if (studentId.startsWith('__new:')) { const st = { id: uid(), classId: $('scanClass').value, name: studentId.slice(6) }; state.students.push(st); studentId = st.id; }
   const t = scanTpl(), values = formValues(), m = metrics(t, values);
   if (validate && m.anomalies.length && !confirm('Anomalies détectées : ' + m.anomalies.join('; ') + '\nValider malgré tout ?')) return;
   const existing = state.scans.find(x => x.studentId === studentId && x.templateId === t.id && x.id !== editing);
@@ -447,6 +448,11 @@ function reviewBatch(id) {
   const tid = q.tplId || q.read?.tplId || $('batchTpl').value; newScan(tid);
   queueEditing = id; setPhoto(q.photo);
   if (q.read?.ref?.kind === 'student' && state.students.some(s => s.id === q.read.ref.id && s.classId === q.classId)) $('scanStudent').value = q.read.ref.id;
+  if (q.read?.ref?.kind === 'name') {
+    const nm = q.read.ref.name, hit = state.students.find(s => s.classId === q.classId && s.name.toLowerCase().startsWith(nm.toLowerCase()));
+    if (hit) $('scanStudent').value = hit.id;
+    else { const o = document.createElement('option'); o.value = '__new:' + nm; o.textContent = '➕ Ajouter « ' + nm + ' » à cette classe'; $('scanStudent').appendChild(o); $('scanStudent').value = o.value; }
+  }
   renderScanFields(q.read?.values || {}); showIssues(q.read?.issues || []);
 }
 
