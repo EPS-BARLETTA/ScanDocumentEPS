@@ -385,6 +385,12 @@ async function saveScan(validate) {
   alert(validate ? 'Fiche validée' : 'Fiche enregistrée à vérifier');
   $('resultTpl').value = t.id; newScan(t.id); view('results');
 }
+async function deleteScan() {
+  if (queueEditing) { if (!confirm('Supprimer cette photo ?')) return; state.queue = state.queue.filter(x => x.id !== queueEditing); await persist(); newScan(); view('batch'); return; }
+  if (!editing) return alert('Cette fiche n’est pas encore enregistrée.');
+  if (!confirm('Supprimer définitivement cette fiche (valeurs et photo) ?')) return;
+  state.scans = state.scans.filter(x => x.id !== editing); await persist(); newScan(); view('results');
+}
 function editScan(id) {
   const r = state.scans.find(x => x.id === id); if (!r) return;
   view('scan'); $('scanClass').value = r.classId; render(); $('scanTpl').value = r.templateId; newScan(r.templateId);

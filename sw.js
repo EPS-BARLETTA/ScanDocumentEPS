@@ -1,5 +1,5 @@
 // Mode hors connexion : la version en ligne est prioritaire, la copie locale sert de secours.
-const CACHE = 'scan-eps-v9';
+const CACHE = 'scan-eps-v10';
 const FILES = ['./', './index.html', './fiche.js', './app.js', './lib/qrcode.js', './lib/jsQR.js', './manifest.webmanifest'];
 
 self.addEventListener('install', e => {
@@ -14,7 +14,7 @@ self.addEventListener('fetch', e => {
   const req = e.request;
   if (req.method !== 'GET' || new URL(req.url).origin !== self.location.origin) return;
   e.respondWith(
-    fetch(req)
+    fetch(req, { cache: 'no-cache' })
       .then(res => { if (res.ok) { const copy = res.clone(); caches.open(CACHE).then(c => c.put(req, copy)); } return res; })
       .catch(() => caches.match(req, { ignoreSearch: true }).then(r => r || caches.match('./index.html')))
   );
