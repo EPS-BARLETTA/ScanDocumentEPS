@@ -75,6 +75,8 @@ function migrate() {
   state.templates = state.templates || [];
   // modèles de la bibliothèque (2 × 800, 3 × 500) toujours disponibles, sauf si supprimés volontairement
   state.removedLib = state.removedLib || [];
+  const sameAs = (t, lib) => JSON.stringify(t.blocks.map(b => b.rows.map(r => [r.label, r.type]))) === JSON.stringify(lib.blocks.map(b => b.rows.map(r => [r.label, r.type])));
+  state.templates = state.templates.filter(t => !(t.id !== 'lib' && !LIBRARY.some(l => l.id === t.id) && LIBRARY.some(l => sameAs(t, l) && t.name.startsWith(l.name)) && !(t.printedFor || []).length && !state.scans.some(x => x.templateId === t.id) && !state.queue.some(q => q.tplId === t.id)));
   for (const lib of LIBRARY) if (!tplById(lib.id) && (!state.removedLib.includes(lib.id) || state.scans.some(s => s.races || s.templateId === lib.id))) state.templates.push(Object.assign(JSON.parse(JSON.stringify(lib)), { createdAt: today() }));
   for (const c of state.classes) c.folder = c.folder || schoolYear();
   for (const t of state.templates) { t.printedFor = t.printedFor || []; t.createdAt = t.createdAt || today(); if (t.id === 't2x800' && !('bareme' in t)) t.bareme = 'ca1-2x800'; }
@@ -113,7 +115,7 @@ function render() {
   const previous = $('scanStudent').value;
   $('scanStudent').innerHTML = '<option value="">— Élève non identifié —</option>' + state.students.filter(s => s.classId === $('scanClass').value).sort((a, b) => a.name.localeCompare(b.name, 'fr')).map(s => '<option value="' + s.id + '">' + escapeHtml(s.name) + '</option>').join('');
   $('scanStudent').value = state.students.some(s => s.id === previous && s.classId === $('scanClass').value) ? previous : '';
-  renderResults(); renderBatch(); renderLibrary(); renderEditor(); calculate();
+  renderResults(); renderBatch(); renderLibrary(); renderEditor(); renderClassEvals(); calculate();
 }
 
 /* ---------- Répertoire des classes ---------- */
@@ -142,6 +144,19 @@ function renderDirectory() {
     }).join('') + '</div></div>';
   }).join('') || '<p class="muted">Aucune classe pour le moment : crée-en une ou importe un CSV PRONOTE.</p>';
 }
+function renderClassEvals() {
+  const c = currentClass(), box = $('classEvals'); if (!box) return;
+  if (!c) { box.innerHTML = ''; return; }
+  const studs = state.students.filter(s => s.classId === c);
+  const items = state.templates.filter(t => (t.printedFor || []).some(p => p.classId === c) || state.scans.some(x => x.classId === c && x.templateId === t.id));
+  box.innerHTML = items.length ? items.map(t => {
+    const pr = (t.printedFor || []).find(p => p.classId === c), lat = studs.map(s => latestScan(s.id, t.id)).filter(Boolean), B = BAREMES[t.bareme];
+    const notes = B ? studs.filter(s => grade(t, s, (r => r ? metrics(t, r.values) : null)(latestScan(s.id, t.id))).total != null).length : null;
+    return '<div class="card"><h4>' + escapeHtml(t.name) + '</h4><div class="muted">' + (pr ? 'Fiches imprimées le ' + new Date(pr.date).toLocaleDateString('fr-FR') + '<br>' : '') + lat.length + ' / ' + studs.length + ' fiche(s) scannée(s) · ' + lat.filter(r => r.status === 'validated').length + ' validée(s)' + (notes != null ? '<br>' + notes + ' / ' + studs.length + ' note(s) complète(s)' : '') + '</div>' +
+      '<div class="acts"><button onclick="goResults(\'' + t.id + '\',\'' + c + '\')">📊 Résultats</button><button class="secondary" onclick="exportHTML(\'' + t.id + '\',\'' + c + '\')">📄 Archive</button>' + (B ? '<button class="secondary" onclick="exportSantorin(\'' + t.id + '\',\'' + c + '\')">🎓 Santorin</button>' : '') + '</div></div>';
+  }).join('') : '<p class="muted">Aucune évaluation pour cette classe. Utilise « Préparer une évaluation ».</p>';
+}
+function goResults(tid, cid) { view('results'); $('resultTpl').value = tid; $('resultClass').value = cid; renderResults(); }
 function openClass(id) { $('classSelect').value = id; render(); $('classDetail').scrollIntoView({ behavior: 'smooth' }); }
 async function moveClass(id) { const c = state.classes.find(x => x.id === id); const f = prompt('Dossier de la classe ' + c.name + ' :', c.folder); if (f && f.trim()) { c.folder = f.trim(); await persist(); render(); } }
 async function renameClass(id) { const c = state.classes.find(x => x.id === id); const n = prompt('Nouveau nom :', c.name); if (n && n.trim()) { c.name = n.trim(); await persist(); render(); } }
@@ -559,7 +574,7 @@ function renderResults() {
   $('progress').textContent = students.length + ' élèves · ' + validated + ' validés · ' + autoOk + ' lus sans alerte · ' + pending + ' à vérifier · ' + (students.length - validated - pending - autoOk) + ' non scannés';
   $('validateAutoBtn').disabled = !autoOk;
 }
-const GRADE_CSS = '.gt{border-collapse:collapse;width:100%;min-width:980px}.gt th,.gt td{border:1px solid #d5e0ea;padding:6px 7px;text-align:center;vertical-align:middle;font-size:14px}.gt td.nm{text-align:left;min-width:150px}.gt th{background:#edf3fa}.gt .a1{background:#e6f3fc}.gt .a2{background:#edf6e4}.gt .a3{background:#fff8d6}.gt th.a1{background:#8cc8ef}.gt th.a2{background:#a9cf86}.gt th.a3{background:#f3dd5e}.gt th.a1s{background:#cfe8f9}.gt th.a2s{background:#d6eac4}.gt th.a3s{background:#faeea6}.gt .sub{font-size:11px;color:#5a6f85;display:block;margin-top:2px}.gt .big{font-size:18px;font-weight:800}.gt .of{font-size:12px;color:#5a6f85}.gt .note{font-size:22px;font-weight:900;color:#123d66}.seg{display:inline-flex;border:1px solid #9fb6cf;border-radius:9px;overflow:hidden;background:#fff}.seg button{background:#fff;color:#18314c;border:0;border-left:1px solid #d5e0ea;padding:5px 7px;border-radius:0;font-size:13px;line-height:1.15;min-height:0;min-width:34px}.seg button:first-child{border-left:0}.seg button{white-space:nowrap}.seg button.on{background:#123d66;color:#fff}.seg button small{display:block;font-size:10px;opacity:.75}.deg{display:inline-block;background:#123d66;color:#fff;border-radius:6px;padding:2px 6px;font-weight:700}.miss{font-size:11px;color:#b83246;display:block}';
+const GRADE_CSS = '.gt tr.nosex td:not(.nm):not(.fg){opacity:.35;pointer-events:none}.gt tr.nosex td.fg{background:#fde8eb}.gt tr.nosex td.nm::after{content:"Choisir F ou G pour noter";display:block;color:#b83246;font-size:12px;font-weight:700}.gt td.nm{position:sticky;left:0;z-index:1;background:#fff}.gt{border-collapse:collapse;width:100%;min-width:980px}.gt th,.gt td{border:1px solid #d5e0ea;padding:6px 7px;text-align:center;vertical-align:middle;font-size:14px}.gt td.nm{text-align:left;min-width:150px}.gt th{background:#edf3fa}.gt .a1{background:#e6f3fc}.gt .a2{background:#edf6e4}.gt .a3{background:#fff8d6}.gt th.a1{background:#8cc8ef}.gt th.a2{background:#a9cf86}.gt th.a3{background:#f3dd5e}.gt th.a1s{background:#cfe8f9}.gt th.a2s{background:#d6eac4}.gt th.a3s{background:#faeea6}.gt .sub{font-size:11px;color:#5a6f85;display:block;margin-top:2px}.gt .big{font-size:18px;font-weight:800}.gt .of{font-size:12px;color:#5a6f85}.gt .note{font-size:22px;font-weight:900;color:#123d66}.seg{display:inline-flex;border:1px solid #9fb6cf;border-radius:9px;overflow:hidden;background:#fff}.seg button{background:#fff;color:#18314c;border:0;border-left:1px solid #d5e0ea;padding:10px 12px;border-radius:0;font-size:17px;font-weight:600;line-height:1.1;min-height:48px;min-width:48px}.seg button:first-child{border-left:0}.seg button{white-space:nowrap}.seg button.on{background:#123d66;color:#fff}.seg button small{display:block;font-size:11px;font-weight:400;opacity:.75}.deg{display:inline-block;background:#123d66;color:#fff;border-radius:6px;padding:2px 6px;font-weight:700}.miss{font-size:11px;color:#b83246;display:block}';
 (() => { const st = document.createElement('style'); st.textContent = GRADE_CSS; document.head.appendChild(st); })();
 const ROLE = { P: 'Partenaire', S: 'Starter / chrono' };
 function gradeHead(screen) {
@@ -577,8 +592,8 @@ function gradeRow(t, s, r, m, st, screen, showClass) {
   const name = '<td class="nm"><b>' + escapeHtml(s.name) + '</b>' + (showClass ? ' <span class="of">' + escapeHtml(className(s.classId)) + '</span>' : '') + '<span class="sub">' + (finals ? '800 m : ' + finals : 'non scanné') + '</span>' +
     (screen ? '<span class="sub"><span class="pill ' + (pill[st] || '') + '">' + (lab[st] || 'Non scanné') + '</span>' + (r ? ' <button class="mini" onclick="editScan(\'' + r.id + '\')">Ouvrir</button>' : '') + '</span>' : '') + '</td>';
   const tot = (v, max) => '<span class="big">' + nf(v) + '</span>' + (max ? '<span class="of"> /' + max + '</span>' : '');
-  return '<tr>' + name +
-    '<td>' + (screen ? seg('sex', [['F', 'F'], ['G', 'G']], s.sex) : (s.sex || '?')) + '</td>' +
+  return '<tr' + (screen && !s.sex ? ' class="nosex"' : '') + '>' + name +
+    '<td class="fg">' + (screen ? seg('sex', [['F', 'F'], ['G', 'G']], s.sex) : (s.sex || '?')) + '</td>' +
     '<td>' + (screen ? seg('choix', Object.keys(CHOIX).map(k => [k, k]), g.choix) : (g.choix || '—')) + '</td>' +
     '<td class="a1">' + (g.noSex && m ? '<span class="miss">F/G ?</span>' : '<b>' + nf(g.perf) + '</b>') + '<span class="sub">' + (g.best != null ? fmt(g.best) : '') + '</span></td>' +
     '<td class="a1"><b>' + nf(g.reg) + '</b><span class="sub">' + (g.pace != null ? round1(g.pace) + ' s' : '') + '</span></td>' +
@@ -632,26 +647,33 @@ function resultsHTML(t, cid) {
   return '<section><h2>' + escapeHtml(className(cid)) + '</h2><p class="sub">' + students.length + ' élèves · ' + rd + ' fiches lues · ' + v + ' validées</p>' +
     '<table' + (B ? ' class="gt"' : '') + '><thead>' + (B ? gradeHead(false) : '<tr><th>Élève</th>' + cols.map(x => '<th>' + escapeHtml(x.head) + '</th>').join('') + '<th>État</th></tr>') + '</thead><tbody>' + main + '</tbody></table>' + (B ? '<h3>Temps relevés</h3>' : '<details><summary>Détail de toutes les valeurs</summary>') + '<table class="small"><thead><tr><th>Élève</th>' + rows.map(x => '<th>' + escapeHtml(x.head) + '</th>').join('') + '<th>Meilleur</th><th>Écarts estimation</th><th>Écart des 200 m</th><th>État</th></tr></thead><tbody>' + detail + '</tbody></table>' + (B ? '' : '</details>') + '</section>';
 }
-function exportHTML() {
-  const t = tplById($('resultTpl').value); if (!t) return;
-  const all = $('resultClass').value === '*', cids = all ? classesUsing(t) : [$('resultClass').value];
+function exportHTML(tid, cid) {
+  const t = tplById(tid || $('resultTpl').value); if (!t) return;
+  const sel = cid || $('resultClass').value, all = sel === '*', cids = all ? classesUsing(t) : [sel];
   if (!cids.length) return alert('Aucune classe n’a encore utilisé cette fiche.');
   const date = new Date().toLocaleDateString('fr-FR');
   const B = BAREMES[t.bareme];
   const css = GRADE_CSS + '.gt .seg,.gt button{display:none}body{font-family:system-ui,-apple-system,sans-serif;color:#18314c;margin:24px}h1{margin:0 0 4px;color:#123d66}h2{margin:26px 0 2px;color:#123d66}.sub{color:#5a6f85;margin:0 0 10px}table{border-collapse:collapse;width:100%;margin:6px 0 10px}th,td{border:1px solid #d5e0ea;padding:6px 8px;text-align:left;font-size:14px}th{background:#edf3fa}.small td,.small th{font-size:12px}tr:nth-child(even) td{background:#fafcfe}.st.validated{color:#16683d;font-weight:600}.st.check{color:#855500;font-weight:600}.st.auto{color:#124f8a}.st.none{color:#999}summary{cursor:pointer;color:#1267a5;margin:4px 0}@media print{details{display:none}section{break-inside:avoid-page}section+section{break-before:page}}';
-  const doc = '<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' + escapeHtml(t.name) + ' — archive</title><style>' + css + '</style></head><body><h1>' + escapeHtml(t.name) + '</h1><p class="sub">Archive complète · exportée le ' + date + ' · ScanDocument EPS' + (B ? ' · ' + escapeHtml(B.name) : '') + '</p>' + cids.map(c => resultsHTML(t, c)).join('') + (B ? baremeLegend(B) : '') + '</body></html>';
+  const doc = '<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' + escapeHtml(t.name) + ' — archive</title><style>' + css + '.cover{min-height:80vh;display:flex;flex-direction:column;justify-content:center;border:3px solid #123d66;border-radius:18px;padding:40px;margin-bottom:30px}.cover h1{font-size:34px}.cover .kv{font-size:18px;margin:6px 0}@media print{.cover{min-height:250mm;break-after:page}}</style></head><body>' + coverHTML(t, cids, 'Archive des résultats') + '<h1>' + escapeHtml(t.name) + '</h1><p class="sub">Archive complète · exportée le ' + date + ' · ScanDocument EPS' + (B ? ' · ' + escapeHtml(B.name) : '') + '</p>' + cids.map(c => resultsHTML(t, c)).join('') + (B ? baremeLegend(B) : '') + '</body></html>';
   download('archive-' + slug(t.name) + '-' + (all ? 'toutes-classes' : slug(className(cids[0]))) + '.html', doc, 'text/html;charset=utf-8');
 }
 
+function coverHTML(t, cids, kind) {
+  const B = BAREMES[t.bareme], studs = state.students.filter(s => cids.includes(s.classId));
+  const read = studs.filter(s => latestScan(s.id, t.id)).length, done = B ? studs.filter(s => grade(t, s, (r => r ? metrics(t, r.values) : null)(latestScan(s.id, t.id))).total != null).length : null;
+  return '<div class="cover"><p class="sub" style="font-size:16px;letter-spacing:.1em">' + escapeHtml(kind.toUpperCase()) + '</p><h1>' + escapeHtml(t.name) + '</h1>' + (B ? '<p class="kv">' + escapeHtml(B.name) + '</p>' : '') +
+    '<p class="kv"><b>Classe(s) :</b> ' + cids.map(c => escapeHtml(className(c))).join(', ') + '</p><p class="kv"><b>Élèves :</b> ' + studs.length + ' · <b>fiches lues :</b> ' + read + (done != null ? ' · <b>notes complètes :</b> ' + done : '') + '</p>' +
+    '<p class="kv"><b>Date d’export :</b> ' + new Date().toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }) + '</p><p class="kv" style="margin-top:40px">Enseignant(e) : ........................................ &nbsp; Signature : ....................</p></div>';
+}
 function baremeLegend(B) {
   const row = (lab, cells, cls) => '<tr><th class="' + cls + '">' + lab + '</th>' + cells.map(c => '<td>' + c + '</td>').join('') + '</tr>';
   return '<section><h2>Rappel du barème</h2><table class="gt" style="min-width:0;width:auto"><thead><tr><th>Points max</th><th>Degré 1</th><th>Degré 2</th><th>Degré 3</th><th>Degré 4</th></tr></thead><tbody>' +
     [[2, 'a1s'], [4, 'a2s'], [6, 'a3s']].map(([n, c]) => row('/' + n, [1, 2, 3, 4].map(d => nf(d * n / 4)), c)).join('') + '</tbody></table>' +
     '<p class="sub">Choix de l’élève : 2-6 (AFL2 /2, AFL3 /6) · 4-4 (AFL2 /4, AFL3 /4) · 6-2 (AFL2 /6, AFL3 /2). AFL1 /12 = performance /6 (meilleur des deux 800 m, table fille/garçon) + régularité /6 (écart entre le 200 m le plus rapide et le plus lent des deux 800 m). AFL2 et AFL3 : un seul degré (1 à 4) par AFL, converti en points selon le choix de l’élève. Le degré AFL2 est proposé d’après les écarts cumulés entre temps annoncés et réalisés (≤ 8 s D4, 9-15 s D3, 16-25 s D2, > 25 s D1) et peut être ajusté par l’enseignant.</p></section>';
 }
-function exportSantorin() {
-  const t = tplById($('resultTpl').value); if (!t || !BAREMES[t.bareme]) return;
-  const all = $('resultClass').value === '*', cids = all ? classesUsing(t) : [$('resultClass').value];
+function exportSantorin(tid, cid) {
+  const t = tplById(tid || $('resultTpl').value); if (!t || !BAREMES[t.bareme]) return;
+  const sel = cid || $('resultClass').value, all = sel === '*', cids = all ? classesUsing(t) : [sel];
   if (!cids.length) return alert('Aucune classe n’a encore utilisé cette fiche.');
   const css = 'body{font-family:system-ui,-apple-system,sans-serif;color:#18314c;margin:24px}h1{margin:0;color:#123d66}h2{color:#123d66;margin:28px 0 8px}p{color:#5a6f85}table{border-collapse:collapse;min-width:640px}th,td{border:1px solid #c9d6e3;padding:9px 12px;font-size:17px;text-align:center}td.l{text-align:left}th{background:#edf3fa}.a1{background:#e6f3fc}.a2{background:#edf6e4}.a3{background:#fff8d6}th.a1{background:#8cc8ef}th.a2{background:#a9cf86}th.a3{background:#f3dd5e}.n{font-weight:900;font-size:19px}.vide{background:#fde8eb!important}@media print{section+section{break-before:page}}';
   const sec = cid => {
