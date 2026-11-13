@@ -45,14 +45,14 @@ function grade(t, s, m) {
   const reg = m && m.pace != null ? regulPts(B, m.pace) : null;
   const afl1 = perf != null && reg != null ? perf + reg : null;
   const dEst = m && m.gap != null ? Math.round(afl2Pts(B, m.gap) * 2) : null;                     // AFL2 · estimer (temps) : degré 1-4
-  const dEntr = has(n.d2tr) ? +n.d2tr : has(n.afl2tr) ? Math.round(n.afl2tr * 2) : null;        // AFL2 · s'entraîner : degré 1-4 (prof)
+  const d2 = has(n.d2) ? +n.d2 : dEst, d2auto = !has(n.d2) && dEst != null;                       // AFL2 : un seul degré, proposé d'après les écarts cumulés
   const d3 = has(n.d3) ? +n.d3 : has(n.afl3) ? Math.round(n.afl3 * 2) : null;                    // AFL3 · rôle : degré 1-4 (prof)
-  const p2 = max2 && dEst != null && dEntr != null ? (dEst + dEntr) / 2 * max2 / 4 : null;
+  const p2 = max2 && d2 != null ? d2 * max2 / 4 : null;
   const p3 = max3 && d3 != null ? d3 * max3 / 4 : null;
   const total = afl1 != null && p2 != null && p3 != null ? afl1 + p2 + p3 : null;
   const acquired = [afl1, p2, p3].reduce((a, v) => a + (v || 0), 0);
-  const missing = [!s.sex && 'F/G', !m && 'fiche', !choix && 'choix', dEntr == null && 'entraînement', d3 == null && 'AFL3'].filter(Boolean);
-  return { perf, reg, afl1, dEst, dEntr, d3, p2, p3, max2, max3, role: n.role || '', choix, total, acquired, missing, noSex: !B.perf[s.sex], best: m?.best, pace: m?.pace, gap: m?.gap };
+  const missing = [!s.sex && 'F/G', !m && 'fiche', !choix && 'choix', d2 == null && 'AFL2', d3 == null && 'AFL3'].filter(Boolean);
+  return { perf, reg, afl1, dEst, d2, d2auto, d3, p2, p3, max2, max3, role: n.role || '', choix, total, acquired, missing, noSex: !B.perf[s.sex], best: m?.best, pace: m?.pace, gap: m?.gap };
 }
 const nf = v => v == null ? '—' : String(Math.round(v * 100) / 100).replace('.', ',');
 async function setNote(sid, tid, k, v) {
@@ -565,7 +565,7 @@ const ROLE = { P: 'Partenaire', S: 'Starter / chrono' };
 function gradeHead(screen) {
   return '<tr><th rowspan="2">Élève</th><th rowspan="2">F/G</th><th rowspan="2">Choix<br>AFL2-AFL3</th><th colspan="3" class="a1">AFL1 · Produire une performance /12</th><th colspan="3" class="a2">AFL2 · S’entraîner</th><th colspan="3" class="a3">AFL3 · Assumer un rôle</th><th rowspan="2">Note<br>/20</th></tr>' +
     '<tr><th class="a1s">Performance /6<span class="sub">meilleur 800 m</span></th><th class="a1s">Régularité /6<span class="sub">écart des 200 m</span></th><th class="a1s">AFL1</th>' +
-    '<th class="a2s">Estimer et réguler<span class="sub">auto · écarts cumulés</span></th><th class="a2s">S’entraîner<span class="sub">degré 1 à 4</span></th><th class="a2s">AFL2</th>' +
+    '<th class="a2s">Écarts cumulés<span class="sub">estimation / réalisé</span></th><th class="a2s">Degré<span class="sub">proposé d’après les temps</span></th><th class="a2s">AFL2</th>' +
     '<th class="a3s">Rôle</th><th class="a3s">Degré<span class="sub">1 à 4</span></th><th class="a3s">AFL3</th></tr>';
 }
 function gradeRow(t, s, r, m, st, screen, showClass) {
@@ -583,8 +583,8 @@ function gradeRow(t, s, r, m, st, screen, showClass) {
     '<td class="a1">' + (g.noSex && m ? '<span class="miss">F/G ?</span>' : '<b>' + nf(g.perf) + '</b>') + '<span class="sub">' + (g.best != null ? fmt(g.best) : '') + '</span></td>' +
     '<td class="a1"><b>' + nf(g.reg) + '</b><span class="sub">' + (g.pace != null ? round1(g.pace) + ' s' : '') + '</span></td>' +
     '<td class="a1">' + tot(g.afl1, 12) + '</td>' +
-    '<td class="a2">' + degTxt(g.dEst, g.max2) + '<span class="sub">' + (g.gap != null ? 'écart ' + round1(g.gap) + ' s' : '') + '</span></td>' +
-    '<td class="a2">' + (screen ? degBtns('d2tr', g.dEntr, g.max2) : degTxt(g.dEntr, g.max2)) + '</td>' +
+    '<td class="a2"><b>' + (g.gap != null ? round1(g.gap) + ' s' : '—') + '</b>' + (g.dEst != null ? '<span class="sub">→ degré ' + g.dEst + '</span>' : '') + '</td>' +
+    '<td class="a2">' + (screen ? degBtns('d2', g.d2, g.max2) : degTxt(g.d2, g.max2)) + (g.d2auto ? '<span class="sub">proposé (temps)</span>' : '') + '</td>' +
     '<td class="a2">' + tot(g.p2, g.max2) + '</td>' +
     '<td class="a3">' + (screen ? seg('role', [['P', 'Partenaire'], ['S', 'Chrono']], g.role) : (ROLE[g.role] || '—')) + '</td>' +
     '<td class="a3">' + (screen ? degBtns('d3', g.d3, g.max3) : degTxt(g.d3, g.max3)) + '</td>' +
@@ -604,11 +604,11 @@ function exportCSV() {
   const c = $('resultClass').value, t = tplById($('resultTpl').value); if (!t) return;
   const rows = t.blocks.flatMap(b => b.rows.map(r => ({ r, head: (b.title ? b.title + ' · ' : '') + r.label })));
   const B = BAREMES[t.bareme];
-  const lines = [['Élève', 'Statut', ...rows.map(x => x.head), 'Meilleur', 'Écart estimations (s)', 'Écart 200 m (s)', ...(B ? ['Sexe', 'AFL1 Performance /6', 'AFL1 Régularité /6', 'AFL1 /12', 'Choix AFL2-AFL3', 'AFL2 Estimation (degré)', 'AFL2 Entraînement (degré)', 'AFL2 points', 'AFL3 Rôle', 'AFL3 (degré)', 'AFL3 points', 'Note /20'] : [])]];
+  const lines = [['Élève', 'Statut', ...rows.map(x => x.head), 'Meilleur', 'Écart estimations (s)', 'Écart 200 m (s)', ...(B ? ['Sexe', 'AFL1 Performance /6', 'AFL1 Régularité /6', 'AFL1 /12', 'Choix AFL2-AFL3', 'Écarts cumulés (s)', 'AFL2 degré', 'AFL2 points', 'AFL3 Rôle', 'AFL3 (degré)', 'AFL3 points', 'Note /20'] : [])]];
   lines[0].unshift('Classe');
   for (const s of resultStudents(c, t)) {
     const r = latestScan(s.id, t.id), m = r ? metrics(t, r.values) : null;
-    lines.push([className(s.classId), s.name, r ? ({ validated: 'validé', auto: 'lu, à valider', check: 'à vérifier' }[scanState(r)]) : 'non scanné', ...rows.map(x => r?.values[x.r.id] ?? ''), m ? fmt(m.best).replace('—', '') : '', m?.gap == null ? '' : round1(m.gap), m?.pace == null ? '' : round1(m.pace), ...(B ? (g => [s.sex || '', g.perf ?? '', g.reg ?? '', g.afl1 ?? '', g.choix || '', g.dEst ?? '', g.dEntr ?? '', g.p2 ?? '', ROLE[g.role] || '', g.d3 ?? '', g.p3 ?? '', g.total ?? ''])(grade(t, s, m)) : [])]);
+    lines.push([className(s.classId), s.name, r ? ({ validated: 'validé', auto: 'lu, à valider', check: 'à vérifier' }[scanState(r)]) : 'non scanné', ...rows.map(x => r?.values[x.r.id] ?? ''), m ? fmt(m.best).replace('—', '') : '', m?.gap == null ? '' : round1(m.gap), m?.pace == null ? '' : round1(m.pace), ...(B ? (g => [s.sex || '', g.perf ?? '', g.reg ?? '', g.afl1 ?? '', g.choix || '', g.gap != null ? round1(g.gap) : '', g.d2 ?? '', g.p2 ?? '', ROLE[g.role] || '', g.d3 ?? '', g.p3 ?? '', g.total ?? ''])(grade(t, s, m)) : [])]);
   }
   const slug = t.name.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/gi, '-').toLowerCase();
   download('resultats-' + slug + '-' + (c === '*' ? 'toutes-classes' : className(c).replace(/\s+/g, '')) + '.csv', '﻿' + lines.map(row => row.map(x => '"' + String(x ?? '').replace(/"/g, '""') + '"').join(';')).join('\r\n'), 'text/csv;charset=utf-8');
@@ -647,7 +647,7 @@ function baremeLegend(B) {
   const row = (lab, cells, cls) => '<tr><th class="' + cls + '">' + lab + '</th>' + cells.map(c => '<td>' + c + '</td>').join('') + '</tr>';
   return '<section><h2>Rappel du barème</h2><table class="gt" style="min-width:0;width:auto"><thead><tr><th>Points max</th><th>Degré 1</th><th>Degré 2</th><th>Degré 3</th><th>Degré 4</th></tr></thead><tbody>' +
     [[2, 'a1s'], [4, 'a2s'], [6, 'a3s']].map(([n, c]) => row('/' + n, [1, 2, 3, 4].map(d => nf(d * n / 4)), c)).join('') + '</tbody></table>' +
-    '<p class="sub">Choix de l’élève : 2-6 (AFL2 /2, AFL3 /6) · 4-4 (AFL2 /4, AFL3 /4) · 6-2 (AFL2 /6, AFL3 /2). AFL1 /12 = performance /6 (meilleur des deux 800 m, table fille/garçon) + régularité /6 (écart entre le 200 m le plus rapide et le plus lent des deux 800 m). AFL2 = moyenne des degrés « estimer et réguler » (écarts cumulés entre temps annoncés et réalisés : ≤ 8 s D4, 9-15 s D3, 16-25 s D2, > 25 s D1) et « s’entraîner ».</p></section>';
+    '<p class="sub">Choix de l’élève : 2-6 (AFL2 /2, AFL3 /6) · 4-4 (AFL2 /4, AFL3 /4) · 6-2 (AFL2 /6, AFL3 /2). AFL1 /12 = performance /6 (meilleur des deux 800 m, table fille/garçon) + régularité /6 (écart entre le 200 m le plus rapide et le plus lent des deux 800 m). AFL2 et AFL3 : un seul degré (1 à 4) par AFL, converti en points selon le choix de l’élève. Le degré AFL2 est proposé d’après les écarts cumulés entre temps annoncés et réalisés (≤ 8 s D4, 9-15 s D3, 16-25 s D2, > 25 s D1) et peut être ajusté par l’enseignant.</p></section>';
 }
 function exportSantorin() {
   const t = tplById($('resultTpl').value); if (!t || !BAREMES[t.bareme]) return;
