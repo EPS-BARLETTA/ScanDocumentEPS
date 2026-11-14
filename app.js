@@ -129,7 +129,7 @@ function render() {
   fillSelect('resultClass', [['*', '— Toutes les classes —'], ...cls], false); if (!$('resultClass').value) $('resultClass').value = cls[0]?.[0] || '*';
   ['batchTpl', 'resultTpl', 'scanTpl'].forEach(id => fillSelect(id, tpls, true));
   renderDirectory();
-  $('roster').innerHTML = state.students.filter(s => s.classId === currentClass()).sort((a, b) => a.name.localeCompare(b.name, 'fr')).map(s => '<div class="rowcard flex"><span class="grow">' + escapeHtml(s.name) + '</span><select onchange="setNote(\'' + s.id + '\',null,\'sex\',this.value);render()"><option value="">Fille / Garçon ?</option><option value="F"' + (s.sex === 'F' ? ' selected' : '') + '>Fille</option><option value="G"' + (s.sex === 'G' ? ' selected' : '') + '>Garçon</option></select><button class="secondary" onclick="openEval({studentId:\'' + s.id + '\'})">🖨 Réimprimer sa fiche</button><button class="secondary" onclick="removeStudent(\'' + s.id + '\')">Retirer</button></div>').join('');
+  $('roster').innerHTML = state.students.filter(s => s.classId === currentClass()).sort((a, b) => a.name.localeCompare(b.name, 'fr')).map(s => '<div class="rowcard flex"><span class="grow">' + escapeHtml(s.name) + clsTag(s) + '</span><select onchange="setNote(\'' + s.id + '\',null,\'sex\',this.value);render()"><option value="">Fille / Garçon ?</option><option value="F"' + (s.sex === 'F' ? ' selected' : '') + '>Fille</option><option value="G"' + (s.sex === 'G' ? ' selected' : '') + '>Garçon</option></select><button class="secondary" onclick="openEval({studentId:\'' + s.id + '\'})">🖨 Réimprimer sa fiche</button><button class="secondary" onclick="removeStudent(\'' + s.id + '\')">Retirer</button></div>').join('');
   const previous = $('scanStudent').value;
   $('scanStudent').innerHTML = '<option value="">— Élève non identifié —</option>' + state.students.filter(s => s.classId === $('scanClass').value).sort((a, b) => a.name.localeCompare(b.name, 'fr')).map(s => '<option value="' + s.id + '">' + escapeHtml(s.name) + '</option>').join('');
   $('scanStudent').value = state.students.some(s => s.id === previous && s.classId === $('scanClass').value) ? previous : '';
@@ -154,8 +154,11 @@ function renderDirectory() {
   $('classDetail').classList.toggle('hidden', !state.classes.length);
   $('directory').innerHTML = folders().map(f => {
     const cls = state.classes.filter(c => (c.folder || schoolYear()) === f).sort((a, b) => a.name.localeCompare(b.name, 'fr', { numeric: true }));
-    return '<div class="folder"><div class="flex"><h3 class="grow">📁 ' + escapeHtml(f) + ' <span class="muted">· ' + cls.length + ' classe(s)</span></h3><button class="mini" onclick="renameFolder(\'' + escapeHtml(f).replace(/'/g, "\\'") + '\')">Renommer</button></div><div class="cards" style="margin-top:8px">' + cls.map(c => {
-      const n = state.students.filter(s => s.classId === c.id).length, work = classWork(c.id);
+    return '<div class="folder"><div class="flex"><h3 class="grow">📁 ' + escapeHtml(f) + ' <span class="muted">· ' + cls.length + ' classe(s)</span></h3><button class="mini" onclick="grpStart(\'' + escapeHtml(f).replace(/'/g, "\\'") + '\')">🔗 Regrouper des classes</button><button class="mini" onclick="renameFolder(\'' + escapeHtml(f).replace(/'/g, "\\'") + '\')">Renommer</button></div>' +
+      (grp && grp.folder === f ? '<div class="notice" style="margin-top:8px"><b>Touche les classes qui forment le groupe</b> (ex. TF, TG, TH, TI), donne-lui un nom puis « Créer le groupe ».<div class="flex" style="margin-top:8px"><input id="grpName" placeholder="Nom du groupe (ex. Tle FGHI)" value="' + escapeHtml(grp.name || '') + '" oninput="grp.name=this.value"><button onclick="grpCreate()">✓ Créer le groupe (' + grp.ids.length + ')</button><button class="mini" onclick="grp=null;render()">Annuler</button></div></div>' : '') +
+      '<div class="cards" style="margin-top:8px">' + cls.map(c => {
+      const n = state.students.filter(s => s.classId === c.id).length, work = classWork(c.id), gs = grp && grp.folder === f;
+      if (gs) return '<div class="cls' + (grp.ids.includes(c.id) ? ' sel' : '') + '" style="cursor:pointer" onclick="grpToggle(\'' + c.id + '\')"><div class="flex"><b class="grow">' + (grp.ids.includes(c.id) ? '✅ ' : '⬜ ') + escapeHtml(c.name) + '</b><span class="pill">' + n + ' élèves</span></div></div>';
       return '<div class="cls' + (c.id === sel ? ' sel' : '') + '"><div class="flex"><b class="grow">' + escapeHtml(c.name) + '</b><span class="pill">' + n + ' élèves</span></div>' +
         '<div class="muted" style="margin:6px 0">' + (work.length ? work.map(w => escapeHtml(w.t.name) + ' : ' + w.valid + ' validées · ' + w.read + ' lues / ' + w.total).join('<br>') : 'Aucune fiche pour le moment') + '</div>' +
         '<button class="mini" onclick="openClass(\'' + c.id + '\')">Ouvrir</button></div>';
@@ -179,6 +182,23 @@ function openClass(id) { $('classSelect').value = id; render(); $('classDetail')
 async function moveClass(id) { const c = state.classes.find(x => x.id === id); const f = prompt('Dossier de la classe ' + c.name + ' :', c.folder); if (f && f.trim()) { c.folder = f.trim(); await persist(); render(); } }
 async function renameClass(id) { const c = state.classes.find(x => x.id === id); const n = prompt('Nouveau nom :', c.name); if (n && n.trim()) { c.name = n.trim(); await persist(); render(); } }
 async function renameFolder(f) { const n = prompt('Nouveau nom du dossier :', f); if (!n || !n.trim()) return; state.classes.forEach(c => { if (c.folder === f) c.folder = n.trim(); }); await persist(); render(); }
+let grp = null;
+function grpStart(f) { grp = { folder: f, ids: [], name: '' }; render(); }
+function grpToggle(id) { const i = grp.ids.indexOf(id); if (i < 0) grp.ids.push(id); else grp.ids.splice(i, 1); render(); }
+async function grpCreate() {
+  if (grp.ids.length < 2) return alert('Touche au moins 2 classes.');
+  const olds = grp.ids.map(id => state.classes.find(c => c.id === id)), name = (grp.name || '').trim() || olds.map(c => c.name).join('-');
+  if (!confirm('Créer le groupe « ' + name + ' » avec ' + olds.map(c => c.name).join(', ') + ' ?\n\nLes élèves passent dans le groupe (leur classe reste indiquée à côté de leur nom). Les fiches déjà lues sont gardées.')) return;
+  const g = { id: uid(), name, folder: grp.folder }; state.classes.push(g);
+  for (const c of olds) {
+    state.students.forEach(s => { if (s.classId === c.id) { s.cls = s.cls || c.name; s.classId = g.id; } });
+    state.scans.forEach(x => { if (x.classId === c.id) x.classId = g.id; });
+    state.queue.forEach(q => { if (q.classId === c.id) q.classId = g.id; });
+    state.templates.forEach(t => { (t.printedFor || []).forEach(p => { if (p.classId === c.id) p.classId = g.id; }); const seen = new Set(); t.printedFor = (t.printedFor || []).filter(p => !seen.has(p.classId) && seen.add(p.classId)); });
+  }
+  state.classes = state.classes.filter(c => !grp.ids.includes(c.id)); grp = null; await persist(); render(); openClass(g.id);
+}
+function clsTag(s) { return s.cls ? ' <span class="of">' + escapeHtml(s.cls) + '</span>' : ''; }
 async function deleteClass(id) {
   const c = state.classes.find(x => x.id === id);
   if (!c) return;
@@ -235,19 +255,28 @@ async function importRoster(e) {
   const hasHeader = nameCol >= 0 || surnameCol >= 0; let n = 0; const created = [];
   if (classCol < 0 && !c) { e.target.value = ''; return alert('Crée d’abord une classe, ou importe un fichier avec une colonne « Classe »'); }
   const folder = $('classFolder').value.trim() || schoolYear();
+  let group = null;
+  if (classCol >= 0) {
+    const names = [...new Set(lines.slice(hasHeader ? 1 : 0).map(l => (parse(l, sep)[classCol] || '').trim()).filter(Boolean))];
+    if (names.length > 1 && confirm('Ce fichier contient ' + names.length + ' classes : ' + names.join(', ') + '.\n\nC’est un groupe que tu évalues ensemble ?\nOK = un seul groupe · Annuler = classes séparées')) {
+      const gn = (prompt('Nom du groupe :', names.join('-')) || names.join('-')).trim();
+      group = state.classes.find(x => x.name === gn && x.folder === folder) || (() => { const g = { id: uid(), name: gn, folder }; state.classes.push(g); created.push(gn); return g; })();
+    }
+  }
   for (const line of lines.slice(hasHeader ? 1 : 0)) {
     const cells = parse(line, sep);
     if (classCol >= 0) {
       const cn = (cells[classCol] || '').trim(); if (!cn) continue;
+      if (group) { c = group.id; var orig = cn; } else {
       let cl = state.classes.find(x => x.name.toLocaleLowerCase('fr') === cn.toLocaleLowerCase('fr') && x.folder === folder);
       if (!cl) { cl = { id: uid(), name: cn, folder }; state.classes.push(cl); created.push(cn); }
-      c = cl.id;
+      c = cl.id; }
     }
     let name = nameCol >= 0 ? cells[nameCol] : surnameCol >= 0 ? (cells[surnameCol] || '') + ' ' + (firstnameCol >= 0 ? cells[firstnameCol] || '' : '') : cells.length > 1 ? cells[0] + ' ' + cells[1] : cells[0];
     name = (name || '').trim();
     const sx = sexCol >= 0 ? sexOfCell(cells[sexCol]) : undefined;
     const ex = state.students.find(s => s.classId === c && s.name.toLocaleLowerCase('fr') === name.toLocaleLowerCase('fr'));
-    if (name && !ex) { state.students.push({ id: uid(), classId: c, name, sex: sx }); n++; } else if (ex && sx && !ex.sex) ex.sex = sx;
+    if (name && !ex) { state.students.push({ id: uid(), classId: c, name, sex: sx, ...(group ? { cls: orig } : {}) }); n++; } else if (ex && sx && !ex.sex) ex.sex = sx;
   }
   const nsex = sexCol >= 0 ? state.students.filter(s => s.sex).length : 0;
   await persist(); e.target.value = ''; render(); alert(n + ' élèves importés' + (sexCol >= 0 ? ' · fille/garçon renseigné' : ' · colonne Sexe non trouvée : fille/garçon à indiquer') + (created.length ? '\n' + created.length + ' classe(s) créée(s) dans « ' + folder + ' » : ' + created.join(', ') : ''));
@@ -731,7 +760,7 @@ function gradeRow(t, s, r, m, st, screen, showClass) {
   const lab = { validated: 'Validé', auto: 'Lu, à valider', check: 'À vérifier' }, pill = { validated: 'ok', auto: 'auto', check: 'warn' };
   const finals = m ? m.blocks.filter(b => b.hasTime).map(b => fmt(b.final)).join(' · ') : '';
   const dispBtn = screen ? ' <button class="mini' + (g.disp ? ' on' : '') + '" style="' + (g.disp ? 'background:#6b7a8c;color:#fff' : '') + '" onclick="setNote(\'' + s.id + '\',\'' + t.id + '\',\'disp\',1)">' + (g.disp ? 'Dispensé ✓' : 'Dispensé ?') + '</button>' : '';
-  const name = '<td class="nm"><b>' + escapeHtml(s.name) + '</b>' + (showClass ? ' <span class="of">' + escapeHtml(className(s.classId)) + '</span>' : '') + '<span class="sub">' + (finals ? 'Temps : ' + finals : 'non scanné') + '</span>' +
+  const name = '<td class="nm"><b>' + escapeHtml(s.name) + '</b>' + clsTag(s) + (showClass ? ' <span class="of">' + escapeHtml(className(s.classId)) + '</span>' : '') + '<span class="sub">' + (finals ? 'Temps : ' + finals : 'non scanné') + '</span>' +
     (screen ? '<span class="sub"><span class="pill ' + (pill[st] || '') + '">' + (lab[st] || 'Non scanné') + '</span>' + (r ? ' <button class="mini" onclick="editScan(\'' + r.id + '\')">Ouvrir</button>' : '') + dispBtn + '</span>' : '') + '</td>';
   if (g.disp) return '<tr class="disp"' + '>' + name + '<td colspan="12" style="background:#eef1f5;color:#5a6f85;font-size:18px;font-weight:700">Dispensé(e)</td></tr>';
   const tot = (v, max) => '<span class="big">' + nf(v) + '</span>' + (max ? '<span class="of"> /' + max + '</span>' : '');
@@ -766,7 +795,7 @@ function exportCSV() {
   lines[0].unshift('Classe');
   for (const s of resultStudents(c, t)) {
     const r = latestScan(s.id, t.id), m = r ? metrics(t, r.values) : null;
-    lines.push([className(s.classId), s.name, r ? ({ validated: 'validé', auto: 'lu, à valider', check: 'à vérifier' }[scanState(r)]) : 'non scanné', ...rows.map(x => r?.values[x.r.id] ?? ''), m ? fmt(m.best).replace('—', '') : '', m?.gap == null ? '' : round1(m.gap), m?.pace == null ? '' : round1(m.pace), ...(B && B.v2 ? v2CSVRow(t, s, m) : B ? (g => g.disp ? [s.sex || '', 'dispensé'] : [s.sex || '', g.perf ?? '', g.reg ?? '', g.afl1 ?? '', g.choix || '', g.gap != null ? round1(g.gap) : '', g.d2 ?? '', g.p2 ?? '', ROLE[g.role] || '', g.d3 ?? '', g.p3 ?? '', g.total ?? ''])(grade(t, s, m)) : [])]);
+    lines.push([s.cls || className(s.classId), s.name, r ? ({ validated: 'validé', auto: 'lu, à valider', check: 'à vérifier' }[scanState(r)]) : 'non scanné', ...rows.map(x => r?.values[x.r.id] ?? ''), m ? fmt(m.best).replace('—', '') : '', m?.gap == null ? '' : round1(m.gap), m?.pace == null ? '' : round1(m.pace), ...(B && B.v2 ? v2CSVRow(t, s, m) : B ? (g => g.disp ? [s.sex || '', 'dispensé'] : [s.sex || '', g.perf ?? '', g.reg ?? '', g.afl1 ?? '', g.choix || '', g.gap != null ? round1(g.gap) : '', g.d2 ?? '', g.p2 ?? '', ROLE[g.role] || '', g.d3 ?? '', g.p3 ?? '', g.total ?? ''])(grade(t, s, m)) : [])]);
   }
   const slug = t.name.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/gi, '-').toLowerCase();
   download('resultats-' + slug + '-' + (c === '*' ? 'toutes-classes' : className(c).replace(/\s+/g, '')) + '.csv', '﻿' + lines.map(row => row.map(x => '"' + String(x ?? '').replace(/"/g, '""') + '"').join(';')).join('\r\n'), 'text/csv;charset=utf-8');
@@ -783,7 +812,7 @@ function resultsHTML(t, cid) {
     if (r) rd++; if (st === 'validated') v++;
     if (B) return B.v2 ? v2Row(t, s, r, m, st, false, false) : gradeRow(t, s, r, m, st, false, false);
     const gc = '';
-    return '<tr><td>' + escapeHtml(s.name) + '</td>' + cols.map(x => '<td>' + (m ? escapeHtml(x.get(m, r.values, x.bi)) : '—') + '</td>').join('') + gc + '<td class="st ' + (st || 'none') + '">' + (lab[st] || 'Non scanné') + '</td></tr>';
+    return '<tr><td>' + escapeHtml(s.name) + (s.cls ? ' (' + escapeHtml(s.cls) + ')' : '') + '</td>' + cols.map(x => '<td>' + (m ? escapeHtml(x.get(m, r.values, x.bi)) : '—') + '</td>').join('') + gc + '<td class="st ' + (st || 'none') + '">' + (lab[st] || 'Non scanné') + '</td></tr>';
   }).join('');
 
   const detail = students.map(s => { const r = latestScan(s.id, t.id), m = r ? metrics(t, r.values) : null, st = scanState(r); return '<tr><td>' + escapeHtml(s.name) + '</td>' + rows.map(x => '<td>' + escapeHtml(r?.values[x.r.id] ?? '') + '</td>').join('') + '<td>' + (m ? fmt(m.best) : '') + '</td><td>' + (m?.gap != null ? round1(m.gap) + ' s' : '') + '</td><td>' + (m?.pace != null ? round1(m.pace) + ' s' : '') + '</td><td class="st ' + (st || 'none') + '">' + (lab[st] || 'Non scanné') + '</td></tr>'; }).join('');
