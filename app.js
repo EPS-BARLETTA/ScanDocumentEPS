@@ -41,7 +41,7 @@ function bar(id) {
   if (b) out = { id, name: b.name, builtin: true, perf: b.perf.F.map((f, i) => ({ pts: (i + 1) * 0.25, F: f, G: b.perf.G[i] })), reg: [...b.regul.map(([max, pts]) => ({ max, pts })), { max: 3.999, pts: 6 }], afl2: b.afl2.map(x => x[0]) };
   else {
     b = (state.baremes || []).find(x => x.id === id); if (!b) return null;
-    out = { id, name: b.name, builtin: false, perf: (b.perfRows || []).map(r => ({ pts: parseFloat(String(r.pts).replace(',', '.')) || 0, F: sec(r.F), G: sec(r.G) })).filter(r => r.pts), reg: (b.regRows || []).map(r => ({ max: parseFloat(String(r.max).replace(',', '.')), pts: parseFloat(String(r.pts).replace(',', '.')) || 0 })).filter(r => Number.isFinite(r.max) && r.pts), afl2: (b.afl2 || [8, 15, 25]).map(Number) };
+    return normV2(b.v === 2 ? b : migrateV1(b));
   }
   out.perfMax = Math.max(0, ...out.perf.map(r => r.pts)); out.regMax = Math.max(0, ...out.reg.map(r => r.pts)); out.afl1max = out.perfMax + out.regMax;
   return out;
@@ -52,6 +52,7 @@ function regulPts(B, e) { let p = 0; for (const r of B.reg) if (e <= r.max + 0.0
 function estDeg(B, g) { return g <= B.afl2[0] ? 4 : g <= B.afl2[1] ? 3 : g <= B.afl2[2] ? 2 : 1; }
 function grade(t, s, m) {
   const B = bar(t.bareme); if (!B) return null;
+  if (B.v2) return gradeV2(t, s, m, B);
   const n = (s.notes || {})[t.id] || {}, has = v => v !== undefined && v !== null && v !== '';
   const choix = CHOIX[n.choix] ? n.choix : null, [max2, max3] = choix ? CHOIX[choix] : [null, null];
   const sexOk = s.sex === 'F' || s.sex === 'G', hasReg = B.reg.length > 0;
@@ -96,7 +97,7 @@ function migrate() {
   for (const lib of LIBRARY) if (!tplById(lib.id) && (!state.removedLib.includes(lib.id) || state.scans.some(s => s.races || s.templateId === lib.id))) state.templates.push(Object.assign(JSON.parse(JSON.stringify(lib)), { createdAt: today() }));
   for (const c of state.classes) c.folder = c.folder || schoolYear();
   for (const t of state.templates) { t.printedFor = t.printedFor || []; t.createdAt = t.createdAt || today(); if (t.id === 't2x800' && !('bareme' in t)) t.bareme = 'ca1-2x800'; if (t.id === 't2x800' && t.name === 'Demi-fond 2 × 800 m') t.name = LIBRARY[0].name; }
-  state.baremes = state.baremes || [];
+  state.baremes = (state.baremes || []).map(migrateV1);
   for (const s of state.scans) {
     if (s.races && !s.values) {
       s.templateId = 't2x800'; s.values = {};
@@ -132,7 +133,7 @@ function render() {
   const previous = $('scanStudent').value;
   $('scanStudent').innerHTML = '<option value="">— Élève non identifié —</option>' + state.students.filter(s => s.classId === $('scanClass').value).sort((a, b) => a.name.localeCompare(b.name, 'fr')).map(s => '<option value="' + s.id + '">' + escapeHtml(s.name) + '</option>').join('');
   $('scanStudent').value = state.students.some(s => s.id === previous && s.classId === $('scanClass').value) ? previous : '';
-  renderResults(); renderBatch(); renderLibrary(); renderEditor(); renderClassEvals(); renderBaremes(); calculate();
+  renderResults(); renderBatch(); renderLibrary(); renderEditor(); renderClassEvals(); renderBaremes(); renderFicheWizard(); calculate();
 }
 
 /* ---------- Répertoire des classes ---------- */
@@ -321,20 +322,9 @@ function openBaremes() { view('models'); $('barSection').scrollIntoView({ behavi
 function renderBaremes() {
   if (!$('barList')) return;
   state.baremes = state.baremes || [];
-  $('barList').innerHTML = allBaremes().map(b => '<div class="card"><h4>' + escapeHtml(b.name) + (b.builtin ? ' 🔒' : '') + '</h4><div class="muted">' + (b.builtin ? 'Barème officiel intégré (non modifiable)' : 'Barème personnel') + ' · AFL1 /' + nf(bar(b.id).afl1max) + '</div><div class="acts">' + (b.builtin ? '<button class="secondary" onclick="newBareme(\'' + b.id + '\')">Copier pour l’adapter</button>' : '<button class="secondary" onclick="barEdit=\'' + b.id + '\';renderBaremes()">Modifier</button>') + '</div></div>').join('');
-  const b = (state.baremes || []).find(x => x.id === barEdit), box = $('barEditor');
-  box.classList.toggle('hidden', !b); if (!b) return;
-  const inp = (path, v, ph, w) => '<input style="width:' + (w || 90) + 'px;padding:8px" value="' + escapeHtml(v ?? '') + '" placeholder="' + (ph || '') + '" onchange="barSet(\'' + path + '\',this.value)">';
-  const B = bar(b.id);
-  box.innerHTML = '<div class="flex"><h3 class="grow" style="margin:0">Barème : ' + inp('name', b.name, 'Nom du barème', 320) + '</h3><button class="mini" onclick="delBareme()">Supprimer</button><button onclick="barEdit=null;renderBaremes()">✓ Terminé</button></div>' +
-    '<div class="grid2" style="margin-top:10px"><div><h4>AFL1 · Performance (meilleur temps)</h4><p class="muted">Pour chaque palier : les points obtenus si le temps est inférieur ou égal (format m:ss).</p><table class="gt" style="min-width:0"><thead><tr><th>Points</th><th>Fille ≤</th><th>Garçon ≤</th><th></th></tr></thead><tbody>' +
-    b.perfRows.map((r, i) => '<tr><td>' + inp('perfRows.' + i + '.pts', r.pts, '1', 70) + '</td><td>' + inp('perfRows.' + i + '.F', r.F, '4:30') + '</td><td>' + inp('perfRows.' + i + '.G', r.G, '3:40') + '</td><td><button class="mini" onclick="barRow(\'perfRows\',' + i + ')">✕</button></td></tr>').join('') +
-    '</tbody></table><button class="mini" onclick="barRow(\'perfRows\')">+ Palier</button></div>' +
-    '<div><h4>AFL1 · Régularité (écart entre fractions)</h4><p class="muted">Points obtenus si l’écart entre la fraction la plus rapide et la plus lente est inférieur ou égal. Vide = pas de note de régularité.</p><table class="gt" style="min-width:0"><thead><tr><th>Écart ≤ (s)</th><th>Points</th><th></th></tr></thead><tbody>' +
-    b.regRows.map((r, i) => '<tr><td>' + inp('regRows.' + i + '.max', r.max, '10', 70) + '</td><td>' + inp('regRows.' + i + '.pts', r.pts, '3', 70) + '</td><td><button class="mini" onclick="barRow(\'regRows\',' + i + ')">✕</button></td></tr>').join('') +
-    '</tbody></table><button class="mini" onclick="barRow(\'regRows\')">+ Palier</button>' +
-    '<h4>AFL2 · degré proposé d’après les écarts cumulés</h4><p>D4 si ≤ ' + inp('afl2.0', b.afl2[0], '8', 60) + ' s · D3 si ≤ ' + inp('afl2.1', b.afl2[1], '15', 60) + ' s · D2 si ≤ ' + inp('afl2.2', b.afl2[2], '25', 60) + ' s · sinon D1</p>' +
-    '<p class="notice">AFL1 /' + nf(B.afl1max) + ' (performance /' + nf(B.perfMax) + (B.regMax ? ' + régularité /' + nf(B.regMax) : '') + ') · AFL2 + AFL3 /8 selon le choix de l’élève · note /' + nf(B.afl1max + 8) + '</p></div></div>';
+  $('barList').innerHTML = allBaremes().map(b => { const B = bar(b.id), used = state.templates.filter(t => t.bareme === b.id).map(t => t.name);
+    return '<div class="card"><h4>' + escapeHtml(b.name) + (b.builtin ? ' 🔒' : '') + '</h4><div class="muted">' + (b.builtin ? 'Barème officiel intégré (non modifiable) · note /' + nf(B.afl1max + 8) : 'Barème personnel · note /' + nf(B.totalMax)) + (used.length ? '<br>Fiche : ' + used.map(escapeHtml).join(', ') : '') + '</div><div class="acts">' + (b.builtin ? '<button class="secondary" onclick="newBareme(\'' + b.id + '\')">Copier pour l’adapter</button>' : '<button class="w-orange" onclick="barEdit=\'' + b.id + '\';fw=null;render();$(\'barEditor\').scrollIntoView({behavior:\'smooth\'})">Modifier</button>') + '</div></div>'; }).join('');
+  renderBarWizard();
 }
 /* ---------- Import d'un barème (protocole Word .docx ou CSV) ---------- */
 async function unzipEntry(buf, name) {
@@ -415,9 +405,9 @@ async function importBareme(e) {
 }
 async function saveImported(b, name) {
   state.baremes = state.baremes || [];
-  const nb = { id: sid('b'), name: name || 'Barème importé', perfRows: b.perfRows, regRows: b.regRows, afl2: b.afl2 };
+  const nb = migrateV1({ id: sid('b'), name: name || 'Barème importé', perfRows: b.perfRows, regRows: b.regRows, afl2: b.afl2 }); nb.name = name || 'Barème importé';
   state.baremes.push(nb); barEdit = nb.id; await persist(); render();
-  alert('Barème importé : ' + nb.perfRows.length + ' paliers de performance, ' + nb.regRows.length + ' paliers de régularité, AFL2 : D4 ≤ ' + nb.afl2[0] + ' s, D3 ≤ ' + nb.afl2[1] + ' s, D2 ≤ ' + nb.afl2[2] + ' s.\nVérifie les valeurs, puis associe ce barème à une fiche.');
+  alert('Barème importé : ' + nb.perf.rows.length + ' paliers de performance' + (nb.calcs[0] ? ', ' + nb.calcs[0].rows.length + ' paliers de régularité' : '') + ', critères AFL2 / AFL3 avec répartition au choix.\nVérifie les valeurs, puis associe ce barème à une fiche.');
   $('barEditor').scrollIntoView({ behavior: 'smooth' });
 }
 function barTemplateCSV() {
@@ -429,9 +419,8 @@ function barTemplateCSV() {
 }
 async function newBareme(from) {
   state.baremes = state.baremes || [];
-  const src = from ? bar(from) : null;
-  const b = { id: sid('b'), name: src ? src.name + ' (copie)' : 'Mon barème', perfRows: src ? src.perf.map(r => ({ pts: String(r.pts), F: r.F != null ? fmt(r.F) : '', G: r.G != null ? fmt(r.G) : '' })) : [{ pts: '1', F: '', G: '' }], regRows: src ? src.reg.map(r => ({ max: String(r.max < 4 && r.max > 3.99 ? 3.9 : r.max), pts: String(r.pts) })) : [], afl2: src ? src.afl2.slice() : [8, 15, 25] };
-  state.baremes.push(b); barEdit = b.id; await persist(); render(); $('barEditor').scrollIntoView({ behavior: 'smooth' });
+  const b = from ? v2FromBac(bar(from)) : newV2();
+  state.baremes.push(b); barEdit = b.id; fw = null; await persist(); render(); $('barEditor').scrollIntoView({ behavior: 'smooth' });
 }
 async function barSet(path, v) { const b = state.baremes.find(x => x.id === barEdit); if (!b) return; const k = path.split('.'); let o = b; for (let i = 0; i < k.length - 1; i++) o = o[k[i]]; o[k[k.length - 1]] = k[0] === 'afl2' ? (parseFloat(v) || 0) : v.trim(); await persist(); render(); }
 async function barRow(list, i) { const b = state.baremes.find(x => x.id === barEdit); if (!b) return; if (i == null) b[list].push(list === 'perfRows' ? { pts: '', F: '', G: '' } : { max: '', pts: '' }); else b[list].splice(i, 1); await persist(); render(); }
@@ -714,19 +703,19 @@ function renderResults() {
   const B = bar(t.bareme);
   $('santorinBtn').classList.toggle('hidden', !B);
   $('resultsTable').classList.toggle('gt', !!B);
-  if (B) $('resultHead').innerHTML = gradeHead(B, true);
+  if (B) $('resultHead').innerHTML = B.v2 ? v2Head(B, true) : gradeHead(B, true);
   else $('resultHead').innerHTML = '<tr><th>Élève</th>' + cols.map(x => '<th>' + escapeHtml(x.head) + '</th>').join('') + '<th>État</th><th>Action</th></tr>';
   $('resultRows').innerHTML = students.map(s => {
     const all = state.scans.filter(x => x.studentId === s.id && x.templateId === t.id), r = latestScan(s.id, t.id), m = r ? metrics(t, r.values) : null, st = scanState(r);
     if (st === 'validated') validated++; else if (st === 'auto') autoOk++; else if (r) pending++;
-    if (B) return gradeRow(t, s, r, m, st, true, c === '*');
+    if (B) return B.v2 ? v2Row(t, s, r, m, st, true, c === '*') : gradeRow(t, s, r, m, st, true, c === '*');
     return '<tr><td>' + (c === '*' ? '<span class="muted">' + escapeHtml(className(s.classId)) + '</span> ' : '') + escapeHtml(s.name) + (all.length > 1 ? ' (' + all.length + ' fiches)' : '') + '</td>' + cols.map(x => '<td>' + (m ? escapeHtml(x.get(m, r.values, x.bi)) : '—') + '</td>').join('') + '<td><span class="pill ' + ({ validated: 'ok', auto: 'auto', check: 'warn' }[st] || '') + '">' + ({ validated: 'Validé', auto: 'Lu ✓ à valider', check: 'À vérifier ⚠' }[st] || 'Non scanné') + '</span></td><td>' + (r ? '<button class="secondary" onclick="editScan(\'' + r.id + '\')">Ouvrir</button>' : '—') + '</td></tr>';
   }).join('');
   const nd = B ? students.filter(s => ((s.notes || {})[t.id] || {}).disp).length : 0, ndNo = B ? students.filter(s => ((s.notes || {})[t.id] || {}).disp && !latestScan(s.id, t.id)).length : 0;
   $('progress').textContent = (nd ? nd + ' dispensé(s) · ' : '') + students.length + ' élèves · ' + validated + ' validés · ' + autoOk + ' lus sans alerte · ' + pending + ' à vérifier · ' + (students.length - validated - pending - autoOk - ndNo) + ' non scannés';
   $('validateAutoBtn').disabled = !autoOk;
 }
-const GRADE_CSS = '.gt tr.nosex td:not(.nm):not(.fg){opacity:.3;pointer-events:none}.gt tr.nosex td.fg{background:#ffe3ea}.gt tr.nosex td.nm::after{content:"Choisir F ou G pour noter";display:block;color:#e0315f;font-size:12px;font-weight:800;margin-top:4px}.gt td.nm{position:sticky;left:0;z-index:1;background:#fff;box-shadow:2px 0 0 #ece8fb}.gt{border-collapse:separate;border-spacing:0;width:100%;min-width:1000px;background:#fff;border-radius:18px;overflow:hidden;box-shadow:0 8px 22px rgba(52,35,120,.08)}.gt th,.gt td{border-bottom:1px solid #ece8fb;border-right:1px solid #f3f0fd;padding:9px 8px;text-align:center;vertical-align:middle;font-size:14px}.gt td.nm{text-align:left;min-width:170px}.gt th{background:#f6f3ff;color:#3a3560;font-weight:750}.gt .a1{background:#eef5ff}.gt .a2{background:#ecfbf3}.gt .a3{background:#fff9e3}.gt th.a1{background:linear-gradient(135deg,#3b82f6,#60a5fa);color:#fff}.gt th.a2{background:linear-gradient(135deg,#12a36b,#34d399);color:#fff}.gt th.a3{background:linear-gradient(135deg,#f5b400,#ffd54a);color:#3a2a00}.gt th.a1s{background:#dbe9ff}.gt th.a2s{background:#d3f5e4}.gt th.a3s{background:#fff0bf}.gt .sub{font-size:11px;color:#6d6a8a;display:block;margin-top:2px}.gt .big{font-size:20px;font-weight:850;color:#1e1b3a}.gt .of{font-size:12px;color:#6d6a8a}.gt .note{font-size:24px;font-weight:900;color:#5b3ff0}.seg{display:inline-flex;border-radius:14px;overflow:hidden;background:#f1eefc;padding:3px;gap:3px}.seg button{background:#fff;color:#3a3560;border:0;padding:10px 12px;border-radius:11px;font-size:17px;font-weight:700;line-height:1.1;min-height:48px;min-width:48px;box-shadow:0 1px 2px rgba(0,0,0,.06);white-space:nowrap;display:inline-block}.seg button.on{background:linear-gradient(135deg,#6c4cf5,#9a6bff);color:#fff;box-shadow:0 4px 10px rgba(108,76,245,.35)}.seg button small{display:block;font-size:11px;font-weight:500;opacity:.75}.seg button.c62{background:#e6f0ff;color:#1d4fb8}.seg button.c44{background:#e3f8ee;color:#0f7a4b}.seg button.c26{background:#fff6d1;color:#8a6400}.seg button.c62.on{background:#3b82f6;color:#fff;box-shadow:0 4px 12px rgba(59,130,246,.45)}.seg button.c44.on{background:#22b573;color:#fff;box-shadow:0 4px 12px rgba(34,181,115,.45)}.seg button.c26.on{background:#facc15;color:#3a2a00;box-shadow:0 4px 12px rgba(250,204,21,.5)}.gt td.ch62{background:#dbe9ff}.gt td.ch44{background:#d3f5e4}.gt td.ch26{background:#fff1b8}.deg{display:inline-block;background:#1e1b3a;color:#fff;border-radius:8px;padding:2px 7px;font-weight:800}.miss{font-size:11px;color:#e0315f;display:block}';
+const GRADE_CSS = '.gt tr.nosex td:not(.nm):not(.fg){opacity:.3;pointer-events:none}.gt tr.nosex td.fg{background:#ffe3ea}.gt tr.nosex td.nm::after{content:"Choisir F ou G pour noter";display:block;color:#e0315f;font-size:12px;font-weight:800;margin-top:4px}.gt td.nm{position:sticky;left:0;z-index:1;background:#fff;box-shadow:2px 0 0 #ece8fb}.gt{border-collapse:separate;border-spacing:0;width:100%;min-width:1000px;background:#fff;border-radius:18px;overflow:hidden;box-shadow:0 8px 22px rgba(52,35,120,.08)}.gt th,.gt td{border-bottom:1px solid #ece8fb;border-right:1px solid #f3f0fd;padding:9px 8px;text-align:center;vertical-align:middle;font-size:14px}.gt td.nm{text-align:left;min-width:170px}.gt th{background:#f6f3ff;color:#3a3560;font-weight:750}.gt .a1{background:#eef5ff}.gt .a2{background:#ecfbf3}.gt .a3{background:#fff9e3}.gt th.a1{background:linear-gradient(135deg,#3b82f6,#60a5fa);color:#fff}.gt th.a2{background:linear-gradient(135deg,#12a36b,#34d399);color:#fff}.gt th.a3{background:linear-gradient(135deg,#f5b400,#ffd54a);color:#3a2a00}.gt th.a1s{background:#dbe9ff}.gt th.a2s{background:#d3f5e4}.gt th.a3s{background:#fff0bf}.gt .sub{font-size:11px;color:#6d6a8a;display:block;margin-top:2px}.gt .big{font-size:20px;font-weight:850;color:#1e1b3a}.gt .of{font-size:12px;color:#6d6a8a}.gt .note{font-size:24px;font-weight:900;color:#5b3ff0}.seg{display:inline-flex;border-radius:14px;overflow:hidden;background:#f1eefc;padding:3px;gap:3px}.seg button{background:#fff;color:#3a3560;border:0;padding:10px 12px;border-radius:11px;font-size:17px;font-weight:700;line-height:1.1;min-height:48px;min-width:48px;box-shadow:0 1px 2px rgba(0,0,0,.06);white-space:nowrap;display:inline-block}.seg button.on{background:linear-gradient(135deg,#6c4cf5,#9a6bff);color:#fff;box-shadow:0 4px 10px rgba(108,76,245,.35)}.seg button small{display:block;font-size:11px;font-weight:500;opacity:.75}.seg button.c62{background:#e6f0ff;color:#1d4fb8}.seg button.c44{background:#e3f8ee;color:#0f7a4b}.seg button.c26{background:#fff6d1;color:#8a6400}.seg button.c62.on{background:#3b82f6;color:#fff;box-shadow:0 4px 12px rgba(59,130,246,.45)}.seg button.c44.on{background:#22b573;color:#fff;box-shadow:0 4px 12px rgba(34,181,115,.45)}.seg button.c26.on{background:#facc15;color:#3a2a00;box-shadow:0 4px 12px rgba(250,204,21,.5)}.gt .a4{background:#e6fafb}.gt .a5{background:#ffeef4}.gt .a6{background:#f1edff}.gt th.a4{background:linear-gradient(135deg,#0ea5b7,#38d1c9);color:#fff}.gt th.a5{background:linear-gradient(135deg,#ff5c8a,#ff8fb1);color:#fff}.gt th.a6{background:linear-gradient(135deg,#6c4cf5,#9a6bff);color:#fff}.gt td.ch62{background:#dbe9ff}.gt td.ch44{background:#d3f5e4}.gt td.ch26{background:#fff1b8}.deg{display:inline-block;background:#1e1b3a;color:#fff;border-radius:8px;padding:2px 7px;font-weight:800}.miss{font-size:11px;color:#e0315f;display:block}';
 (() => { const st = document.createElement('style'); st.textContent = GRADE_CSS; document.head.appendChild(st); })();
 const ROLE = { P: 'Partenaire', S: 'Starter / chrono' };
 function gradeHead(B, screen) {
@@ -773,11 +762,11 @@ function exportCSV() {
   const c = $('resultClass').value, t = tplById($('resultTpl').value); if (!t) return;
   const rows = t.blocks.flatMap(b => b.rows.map(r => ({ r, head: (b.title ? b.title + ' · ' : '') + r.label })));
   const B = bar(t.bareme);
-  const lines = [['Élève', 'Statut', ...rows.map(x => x.head), 'Meilleur', 'Écart estimations (s)', 'Écart 200 m (s)', ...(B ? ['Sexe', 'AFL1 Performance', 'AFL1 Régularité', 'AFL1', 'Choix AFL2-AFL3', 'Écarts cumulés (s)', 'AFL2 degré', 'AFL2 points', 'AFL3 Rôle', 'AFL3 (degré)', 'AFL3 points', 'Note /20'] : [])]];
+  const lines = [['Élève', 'Statut', ...rows.map(x => x.head), 'Meilleur', 'Écart estimations (s)', 'Écart 200 m (s)', ...(B && B.v2 ? v2CSVHead(B) : B ? ['Sexe', 'AFL1 Performance', 'AFL1 Régularité', 'AFL1', 'Choix AFL2-AFL3', 'Écarts cumulés (s)', 'AFL2 degré', 'AFL2 points', 'AFL3 Rôle', 'AFL3 (degré)', 'AFL3 points', 'Note /20'] : [])]];
   lines[0].unshift('Classe');
   for (const s of resultStudents(c, t)) {
     const r = latestScan(s.id, t.id), m = r ? metrics(t, r.values) : null;
-    lines.push([className(s.classId), s.name, r ? ({ validated: 'validé', auto: 'lu, à valider', check: 'à vérifier' }[scanState(r)]) : 'non scanné', ...rows.map(x => r?.values[x.r.id] ?? ''), m ? fmt(m.best).replace('—', '') : '', m?.gap == null ? '' : round1(m.gap), m?.pace == null ? '' : round1(m.pace), ...(B ? (g => g.disp ? [s.sex || '', 'dispensé'] : [s.sex || '', g.perf ?? '', g.reg ?? '', g.afl1 ?? '', g.choix || '', g.gap != null ? round1(g.gap) : '', g.d2 ?? '', g.p2 ?? '', ROLE[g.role] || '', g.d3 ?? '', g.p3 ?? '', g.total ?? ''])(grade(t, s, m)) : [])]);
+    lines.push([className(s.classId), s.name, r ? ({ validated: 'validé', auto: 'lu, à valider', check: 'à vérifier' }[scanState(r)]) : 'non scanné', ...rows.map(x => r?.values[x.r.id] ?? ''), m ? fmt(m.best).replace('—', '') : '', m?.gap == null ? '' : round1(m.gap), m?.pace == null ? '' : round1(m.pace), ...(B && B.v2 ? v2CSVRow(t, s, m) : B ? (g => g.disp ? [s.sex || '', 'dispensé'] : [s.sex || '', g.perf ?? '', g.reg ?? '', g.afl1 ?? '', g.choix || '', g.gap != null ? round1(g.gap) : '', g.d2 ?? '', g.p2 ?? '', ROLE[g.role] || '', g.d3 ?? '', g.p3 ?? '', g.total ?? ''])(grade(t, s, m)) : [])]);
   }
   const slug = t.name.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/gi, '-').toLowerCase();
   download('resultats-' + slug + '-' + (c === '*' ? 'toutes-classes' : className(c).replace(/\s+/g, '')) + '.csv', '﻿' + lines.map(row => row.map(x => '"' + String(x ?? '').replace(/"/g, '""') + '"').join(';')).join('\r\n'), 'text/csv;charset=utf-8');
@@ -792,14 +781,14 @@ function resultsHTML(t, cid) {
   const main = students.map(s => {
     const r = latestScan(s.id, t.id), m = r ? metrics(t, r.values) : null, st = scanState(r), g = B ? grade(t, s, m) : null;
     if (r) rd++; if (st === 'validated') v++;
-    if (B) return gradeRow(t, s, r, m, st, false, false);
+    if (B) return B.v2 ? v2Row(t, s, r, m, st, false, false) : gradeRow(t, s, r, m, st, false, false);
     const gc = '';
     return '<tr><td>' + escapeHtml(s.name) + '</td>' + cols.map(x => '<td>' + (m ? escapeHtml(x.get(m, r.values, x.bi)) : '—') + '</td>').join('') + gc + '<td class="st ' + (st || 'none') + '">' + (lab[st] || 'Non scanné') + '</td></tr>';
   }).join('');
 
   const detail = students.map(s => { const r = latestScan(s.id, t.id), m = r ? metrics(t, r.values) : null, st = scanState(r); return '<tr><td>' + escapeHtml(s.name) + '</td>' + rows.map(x => '<td>' + escapeHtml(r?.values[x.r.id] ?? '') + '</td>').join('') + '<td>' + (m ? fmt(m.best) : '') + '</td><td>' + (m?.gap != null ? round1(m.gap) + ' s' : '') + '</td><td>' + (m?.pace != null ? round1(m.pace) + ' s' : '') + '</td><td class="st ' + (st || 'none') + '">' + (lab[st] || 'Non scanné') + '</td></tr>'; }).join('');
   return '<section><h2>' + escapeHtml(className(cid)) + '</h2><p class="sub">' + students.length + ' élèves · ' + rd + ' fiches lues · ' + v + ' validées</p>' +
-    '<table' + (B ? ' class="gt"' : '') + '><thead>' + (B ? gradeHead(B, false) : '<tr><th>Élève</th>' + cols.map(x => '<th>' + escapeHtml(x.head) + '</th>').join('') + '<th>État</th></tr>') + '</thead><tbody>' + main + '</tbody></table>' + (B ? '<h3>Temps relevés</h3>' : '<details><summary>Détail de toutes les valeurs</summary>') + '<table class="small"><thead><tr><th>Élève</th>' + rows.map(x => '<th>' + escapeHtml(x.head) + '</th>').join('') + '<th>Meilleur</th><th>Écarts estimation</th><th>Écart des 200 m</th><th>État</th></tr></thead><tbody>' + detail + '</tbody></table>' + (B ? '' : '</details>') + '</section>';
+    '<table' + (B ? ' class="gt"' : '') + '><thead>' + (B ? (B.v2 ? v2Head(B, false) : gradeHead(B, false)) : '<tr><th>Élève</th>' + cols.map(x => '<th>' + escapeHtml(x.head) + '</th>').join('') + '<th>État</th></tr>') + '</thead><tbody>' + main + '</tbody></table>' + (B ? '<h3>Temps relevés</h3>' : '<details><summary>Détail de toutes les valeurs</summary>') + '<table class="small"><thead><tr><th>Élève</th>' + rows.map(x => '<th>' + escapeHtml(x.head) + '</th>').join('') + '<th>Meilleur</th><th>Écarts estimation</th><th>Écart des 200 m</th><th>État</th></tr></thead><tbody>' + detail + '</tbody></table>' + (B ? '' : '</details>') + '</section>';
 }
 function exportHTML(tid, cid) {
   const t = tplById(tid || $('resultTpl').value); if (!t) return;
@@ -808,7 +797,7 @@ function exportHTML(tid, cid) {
   const date = new Date().toLocaleDateString('fr-FR');
   const B = bar(t.bareme);
   const css = GRADE_CSS + '.gt .seg,.gt button{display:none}body{font-family:system-ui,-apple-system,sans-serif;color:#18314c;margin:24px}h1{margin:0 0 4px;color:#123d66}h2{margin:26px 0 2px;color:#123d66}.sub{color:#5a6f85;margin:0 0 10px}table{border-collapse:collapse;width:100%;margin:6px 0 10px}th,td{border:1px solid #d5e0ea;padding:6px 8px;text-align:left;font-size:14px}th{background:#edf3fa}.small td,.small th{font-size:12px}tr:nth-child(even) td{background:#fafcfe}.st.validated{color:#16683d;font-weight:600}.st.check{color:#855500;font-weight:600}.st.auto{color:#124f8a}.st.none{color:#999}summary{cursor:pointer;color:#1267a5;margin:4px 0}@media print{details{display:none}section{break-inside:avoid-page}section+section{break-before:page}}';
-  const doc = '<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' + escapeHtml(t.name) + ' — archive</title><style>' + css + '.cover{min-height:80vh;display:flex;flex-direction:column;justify-content:center;border:3px solid #123d66;border-radius:18px;padding:40px;margin-bottom:30px}.cover h1{font-size:34px}.cover .kv{font-size:18px;margin:6px 0}@media print{.cover{min-height:250mm;break-after:page}}</style></head><body>' + coverHTML(t, cids, 'Archive des résultats') + '<h1>' + escapeHtml(t.name) + '</h1><p class="sub">Archive complète · exportée le ' + date + ' · ScanDocument EPS' + (B ? ' · ' + escapeHtml(B.name) : '') + '</p>' + cids.map(c => resultsHTML(t, c)).join('') + (B ? baremeLegend(B) : '') + '</body></html>';
+  const doc = '<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' + escapeHtml(t.name) + ' — archive</title><style>' + css + '.cover{min-height:80vh;display:flex;flex-direction:column;justify-content:center;border:3px solid #123d66;border-radius:18px;padding:40px;margin-bottom:30px}.cover h1{font-size:34px}.cover .kv{font-size:18px;margin:6px 0}@media print{.cover{min-height:250mm;break-after:page}}</style></head><body>' + coverHTML(t, cids, 'Archive des résultats') + '<h1>' + escapeHtml(t.name) + '</h1><p class="sub">Archive complète · exportée le ' + date + ' · ScanDocument EPS' + (B ? ' · ' + escapeHtml(B.name) : '') + '</p>' + cids.map(c => resultsHTML(t, c)).join('') + (B ? (B.v2 ? v2Legend(B) : baremeLegend(B)) : '') + '</body></html>';
   download('archive-' + slug(t.name) + '-' + (all ? 'toutes-classes' : slug(className(cids[0]))) + '.html', doc, 'text/html;charset=utf-8');
 }
 
@@ -832,7 +821,7 @@ function exportSantorin(tid, cid) {
   const sel = cid || $('resultClass').value, all = sel === '*', cids = all ? classesUsing(t) : [sel];
   if (!cids.length) return alert('Aucune classe n’a encore utilisé cette fiche.');
   const css = 'body{font-family:system-ui,-apple-system,sans-serif;color:#18314c;margin:24px}h1{margin:0;color:#123d66}h2{color:#123d66;margin:28px 0 8px}p{color:#5a6f85}table{border-collapse:collapse;min-width:640px}th,td{border:1px solid #c9d6e3;padding:9px 12px;font-size:17px;text-align:center}td.l{text-align:left}th{background:#edf3fa}.a1{background:#e6f3fc}.a2{background:#edf6e4}.a3{background:#fff8d6}th.a1{background:#8cc8ef}th.a2{background:#a9cf86}th.a3{background:#f3dd5e}.ch62{background:#bcd6ff}.ch44{background:#bdf0d6}.ch26{background:#ffe98a}.n{font-weight:900;font-size:19px}.vide{background:#fde8eb!important}@media print{section+section{break-before:page}}';
-  const sec = cid => {
+  const sec = bar(t.bareme).v2 ? (cid => v2SantorinSection(t, cid)) : cid => {
     const studs = state.students.filter(s => s.classId === cid).sort((a, b) => a.name.localeCompare(b.name, 'fr'));
     const rows = studs.map(s => { const r = latestScan(s.id, t.id), m = r ? metrics(t, r.values) : null, g = grade(t, s, m), [nom, pre] = splitName(s.name), c = (v, cls) => '<td class="' + cls + (v == null ? ' vide' : '') + '">' + (v == null ? '' : nf(v)) + '</td>';
       if (g.disp) return '<tr><td class="l"><b>' + escapeHtml(nom) + '</b></td><td class="l">' + escapeHtml(pre) + '</td><td colspan="5" style="color:#5a6f85;font-weight:700">Dispensé(e)</td></tr>';
