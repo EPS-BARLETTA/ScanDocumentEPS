@@ -2,11 +2,11 @@
 /* ScanDocument EPS — assistants « Créer une fiche » et « Créer un barème », barèmes personnalisés (v2). */
 
 /* ================= Modèle de barème personnalisé ================= */
-const PERF_MODES = { best: ['Le meilleur temps', 'On garde la meilleure course'], mean: ['La moyenne des temps', 'Moyenne des temps de toutes les courses'], each: ['Chaque course', 'Points de chaque course, puis moyenne'] };
+const PERF_MODES = { best: ['Le meilleur temps', 'On garde la course la plus rapide'], sum: ['Le total des temps', 'On additionne les temps de toutes les courses (temps cumulé)'], mean: ['La moyenne des temps', 'On fait la moyenne des temps des courses'], each: ['Une note par course', 'Chaque course est notée, puis on fait la moyenne'] };
 const CALC_TYPES = {
-  reg_each: ['Régularité par course', 'Pour chaque course : écart entre la fraction la plus rapide et la plus lente, puis moyenne des courses'],
-  reg_all: ['Régularité sur toutes les courses', 'Écart entre la fraction la plus rapide et la plus lente, toutes courses confondues (calcul du bac)'],
-  estim: ['Écart estimation / réalisé', 'Somme des écarts entre les temps annoncés et les temps réalisés']
+  reg_all: ['Régularité (comme au bac)', 'Écart entre le tour le plus rapide et le tour le plus lent, sur toutes les courses'],
+  reg_each: ['Régularité course par course', 'Écart entre le tour le plus rapide et le plus lent dans chaque course, puis moyenne'],
+  estim: ['Respect de l’estimation', 'Écart total entre les temps annoncés et les temps réalisés']
 };
 const numv = v => { const x = parseFloat(String(v ?? '').replace(',', '.')); return Number.isFinite(x) ? x : null; };
 const COMP_CLS = ['a2', 'a3', 'a5', 'a6', 'a4'];
@@ -47,7 +47,8 @@ function gradeV2(t, s, m, B) {
     const ok = finals.filter(v => v != null);
     if (B.perfMode === 'best' && ok.length) { perfVal = Math.min(...ok); perf = lookupPts(B.perfRows, perfVal, s.sex); }
     else if (ok.length && ok.length === finals.length) {
-      if (B.perfMode === 'mean') { perfVal = ok.reduce((a, v) => a + v, 0) / ok.length; perf = lookupPts(B.perfRows, perfVal, s.sex); }
+      if (B.perfMode === 'sum') { perfVal = ok.reduce((a, v) => a + v, 0); perf = lookupPts(B.perfRows, perfVal, s.sex); }
+      else if (B.perfMode === 'mean') { perfVal = ok.reduce((a, v) => a + v, 0) / ok.length; perf = lookupPts(B.perfRows, perfVal, s.sex); }
       else { perf = ok.reduce((a, v) => a + lookupPts(B.perfRows, v, s.sex), 0) / ok.length; perfVal = null; }
     }
   }
@@ -141,6 +142,14 @@ function parsePerfText(text) {
     if (!P) return null;
     return P.nums.slice(0, n).map((p, k) => ({ pts: p, F: F.times[k] || '', G: G ? G.times[k] || '' : '' }));
   }
+  // colonnes copiées les unes après les autres (Texte en direct d'une photo)
+  const allT = info.flatMap(x => x.times), allN = info.filter(x => !/[a-zA-Zé]/.test(x.l.replace(TIME_RE, ''))).flatMap(x => x.nums);
+  if (allN.length >= 3 && allT.length === 2 * allN.length) {
+    const n = allN.length, txt = String(text).toLowerCase(), gFirst = txt.indexOf('gar') >= 0 && txt.indexOf('fil') >= 0 && txt.indexOf('gar') < txt.indexOf('fil');
+    const A = allT.slice(0, n), Bt = allT.slice(n);
+    return allN.map((p, k) => ({ pts: p, F: (gFirst ? Bt : A)[k], G: (gFirst ? A : Bt)[k] }));
+  }
+  if (allN.length >= 3 && allT.length === allN.length) return allN.map((p, k) => ({ pts: p, F: allT[k], G: '' }));
   return null;
 }
 function parsePairText(text) {
@@ -186,7 +195,7 @@ function barTotalHTML(b) {
   B.calcs.forEach(c => parts.push(escapeHtml(c.name || CALC_TYPES[c.type][0]) + ' /' + nf(c.maxPts)));
   B.crits.filter(c => !B.inSplit(c)).forEach(c => parts.push(escapeHtml(c.name || 'Critère') + ' /' + nf(critMaxPts(c))));
   if (B.split) parts.push('répartition au choix ' + B.split.options.join(' · '));
-  return '<b>Note /' + nf(B.totalMax) + '</b> = ' + (parts.join(' + ') || '—');
+  return '<b>Note sur ' + nf(B.totalMax) + '</b> = ' + (parts.join(' + ') || '—');
 }
 function renderBarWizard() {
   const box = $('barEditor'), b = curBar(); if (!box) return;
@@ -194,36 +203,36 @@ function renderBarWizard() {
   const inp = (path, v, ph, w, extra) => '<input style="width:' + (w || 90) + 'px" value="' + escapeHtml(v ?? '') + '" placeholder="' + (ph || '') + '" onchange="bSet(\'' + path + '\',this.value,false)"' + (extra || '') + '>';
   const tpls = state.templates.filter(t => t.bareme === b.id).map(t => t.id);
   let h = '<div class="wiz-head"><span class="badge g-orange">🎯</span><div class="grow"><small>Barème</small>' + inp('name', b.name, 'Nom du barème', 360, ' class="wiz-title"') + '</div><button class="mini" onclick="delBareme()">Supprimer</button><button class="w-orange" onclick="barEdit=null;render()">✓ Terminé</button></div>';
-  h += '<div class="wstep"><h3><b>1</b>Fiche concernée</h3><p class="muted">Le barème s’applique aux résultats de cette fiche.</p><select onchange="barLinkTpl(this.value)"><option value="">— aucune pour l’instant —</option>' + state.templates.map(t => '<option value="' + t.id + '"' + (tpls.includes(t.id) ? ' selected' : '') + '>' + escapeHtml(t.name) + '</option>').join('') + '</select></div>';
+  h += '<div class="wstep"><h3><b>1</b>Pour quelle épreuve ?</h3><p class="muted">Choisis la fiche que ce barème va noter (par exemple « 3 × 500 m »). Tu pourras aussi le faire plus tard.</p><select onchange="barLinkTpl(this.value)"><option value="">— choisir la fiche —</option>' + state.templates.map(t => '<option value="' + t.id + '"' + (tpls.includes(t.id) ? ' selected' : '') + '>' + escapeHtml(t.name) + '</option>').join('') + '</select></div>';
   // Performance
-  h += '<div class="wstep"><h3><b>2</b>Performance : qu’est-ce qu’on évalue ?</h3><div class="pick">' + Object.entries(PERF_MODES).map(([k, [t, d]]) => '<button class="' + (b.perf.mode === k ? 'on' : '') + '" onclick="bSet(\'perf.mode\',\'' + k + '\')"><b>' + t + '</b><span class="muted">' + d + '</span></button>').join('') + '</div>' +
-    '<h4>Tableau des points (temps inférieur ou égal → points)</h4>' + pasteTools('perf') +
-    '<table class="gt" style="min-width:0"><thead><tr><th>Points</th><th>Fille ≤</th><th>Garçon ≤</th><th></th></tr></thead><tbody>' +
+  h += '<div class="wstep"><h3><b>2</b>Quel temps compte pour la note de performance ?</h3><div class="pick">' + Object.entries(PERF_MODES).map(([k, [t, d]]) => '<button class="' + (b.perf.mode === k ? 'on' : '') + '" onclick="bSet(\'perf.mode\',\'' + k + '\')"><b>' + t + '</b><span class="muted">' + d + '</span></button>').join('') + '</div>' +
+    '<h4>Ton tableau : temps à réaliser → points</h4><p class="muted">Un élève qui fait ce temps ou mieux obtient ces points.</p>' + pasteTools('perf') +
+    '<table class="gt" style="min-width:0"><thead><tr><th>Points</th><th>Temps fille</th><th>Temps garçon</th><th></th></tr></thead><tbody>' +
     b.perf.rows.map((r, i) => '<tr><td>' + inp('perf.rows.' + i + '.pts', r.pts, '1', 70) + '</td><td>' + inp('perf.rows.' + i + '.F', r.F, '4:30') + '</td><td>' + inp('perf.rows.' + i + '.G', r.G, '3:40') + '</td><td><button class="mini" onclick="bMut(b=>b.perf.rows.splice(' + i + ',1))">✕</button></td></tr>').join('') +
     '</tbody></table><button class="mini" onclick="bMut(b=>b.perf.rows.push({pts:\'\',F:\'\',G:\'\'}))">+ Palier</button> <button class="mini" onclick="if(confirm(\'Vider le tableau ?\'))bMut(b=>b.perf.rows=[])">Vider</button></div>';
   // Calculs
-  h += '<div class="wstep"><h3><b>3</b>Autres calculs à partir des temps <span class="muted">(option)</span></h3>' + b.calcs.map((c, i) => '<div class="sub-card"><div class="flex"><input class="grow" value="' + escapeHtml(c.name || '') + '" placeholder="Nom (ex. Régularité)" onchange="bSet(\'calcs.' + i + '.name\',this.value,false)"><button class="mini" onclick="bMut(b=>b.calcs.splice(' + i + ',1))">Retirer</button></div>' +
+  h += '<div class="wstep"><h3><b>3</b>Noter aussi la régularité ou l’estimation ? <span class="muted">(facultatif)</span></h3>' + b.calcs.map((c, i) => '<div class="sub-card"><div class="flex"><input class="grow" value="' + escapeHtml(c.name || '') + '" placeholder="Nom affiché (ex. Régularité)" onchange="bSet(\'calcs.' + i + '.name\',this.value,false)"><button class="mini" onclick="bMut(b=>b.calcs.splice(' + i + ',1))">Retirer</button></div>' +
     '<div class="pick" style="margin-top:8px">' + Object.entries(CALC_TYPES).map(([k, [t, d]]) => '<button class="' + (c.type === k ? 'on' : '') + '" onclick="bSet(\'calcs.' + i + '.type\',\'' + k + '\')"><b>' + t + '</b><span class="muted">' + d + '</span></button>').join('') + '</div>' +
-    '<h4>Barème (valeur inférieure ou égale → points)</h4>' + pasteTools(i) + '<table class="gt" style="min-width:0"><thead><tr><th>Valeur ≤ (s)</th><th>Points</th><th></th></tr></thead><tbody>' +
+    '<h4>Ton tableau : écart en secondes → points</h4><p class="muted">Un élève qui a cet écart ou moins obtient ces points.</p>' + pasteTools(i) + '<table class="gt" style="min-width:0"><thead><tr><th>Écart (s)</th><th>Points</th><th></th></tr></thead><tbody>' +
     (c.rows || []).map((r, j) => '<tr><td>' + inp('calcs.' + i + '.rows.' + j + '.max', r.max, '10', 70) + '</td><td>' + inp('calcs.' + i + '.rows.' + j + '.pts', r.pts, '3', 70) + '</td><td><button class="mini" onclick="bMut(b=>b.calcs[' + i + '].rows.splice(' + j + ',1))">✕</button></td></tr>').join('') +
     '</tbody></table><button class="mini" onclick="bMut(b=>b.calcs[' + i + '].rows.push({max:\'\',pts:\'\'}))">+ Palier</button></div>').join('') +
-    '<button class="secondary" onclick="bMut(b=>b.calcs.push({id:sid(\'c\'),name:\'Régularité\',type:\'reg_all\',rows:[]}))">+ Ajouter un calcul</button></div>';
+    '<button class="secondary" onclick="bMut(b=>b.calcs.push({id:sid(\'c\'),name:\'Régularité\',type:\'reg_all\',rows:[]}))">+ Ajouter (régularité, estimation…)</button></div>';
   // Critères
-  h += '<div class="wstep"><h3><b>4</b>Critères notés par l’enseignant <span class="muted">(option, autant que tu veux)</span></h3>' + b.crits.map((c, i) => {
+  h += '<div class="wstep"><h3><b>4</b>Ce que tu notes toi-même <span class="muted">(facultatif, autant que tu veux : investissement, rôle, échauffement…)</span></h3>' + b.crits.map((c, i) => {
     const L = Math.max(2, Math.min(6, +c.levels || 4)), pts = c.pts || [];
-    return '<div class="sub-card"><div class="flex"><input class="grow" value="' + escapeHtml(c.name || '') + '" placeholder="Nom du critère (ex. Investissement)" onchange="bSet(\'crits.' + i + '.name\',this.value,false)"><button class="mini" onclick="bMut(b=>{const id=b.crits[' + i + '].id;b.crits.splice(' + i + ',1);if(b.split&&(b.split.a===id||b.split.b===id))b.split.on=false})">Retirer</button></div>' +
-      '<div class="flex" style="margin-top:8px"><label style="margin:0">Niveaux</label><span class="seg">' + [2, 3, 4, 5, 6].map(n => '<button class="' + (L === n ? 'on' : '') + '" onclick="bSet(\'crits.' + i + '.levels\',' + n + ')">' + n + '</button>').join('') + '</span></div>' +
-      '<div class="pick" style="margin-top:8px"><button class="' + (!c.custom ? 'on' : '') + '" onclick="bSet(\'crits.' + i + '.custom\',false)"><b>Niveaux sans intermédiaire</b><span class="muted">Points = niveau × maximum ÷ ' + L + ' (comme au bac)</span></button><button class="' + (c.custom ? 'on' : '') + '" onclick="bSet(\'crits.' + i + '.custom\',true)"><b>Points par niveau</b><span class="muted">Tu fixes les points de chaque niveau</span></button></div>' +
+    return '<div class="sub-card"><div class="flex"><input class="grow" value="' + escapeHtml(c.name || '') + '" placeholder="Nom (ex. Investissement)" onchange="bSet(\'crits.' + i + '.name\',this.value,false)"><button class="mini" onclick="bMut(b=>{const id=b.crits[' + i + '].id;b.crits.splice(' + i + ',1);if(b.split&&(b.split.a===id||b.split.b===id))b.split.on=false})">Retirer</button></div>' +
+      '<div class="flex" style="margin-top:8px"><label style="margin:0">Nombre de niveaux</label><span class="seg">' + [2, 3, 4, 5, 6].map(n => '<button class="' + (L === n ? 'on' : '') + '" onclick="bSet(\'crits.' + i + '.levels\',' + n + ')">' + n + '</button>').join('') + '</span></div>' +
+      (b.split && b.split.on && (b.split.a === c.id || b.split.b === c.id) ? '<p class="notice" style="margin-top:8px">Les points de cet élément dépendent de la répartition choisie par l’élève (étape 5).</p>' : '') +
+      (b.split && b.split.on && (b.split.a === c.id || b.split.b === c.id) ? '' : '<div class="pick" style="margin-top:8px"><button class="' + (!c.custom ? 'on' : '') + '" onclick="bSet(\'crits.' + i + '.custom\',false)"><b>Points réguliers</b><span class="muted">Tu donnes le maximum, les niveaux se partagent les points (comme au bac)</span></button><button class="' + (c.custom ? 'on' : '') + '" onclick="bSet(\'crits.' + i + '.custom\',true)"><b>Je choisis les points</b><span class="muted">Tu écris les points de chaque niveau</span></button></div>' +
       (c.custom ? '<div class="flex" style="margin-top:8px">' + Array.from({ length: L }, (_, k) => '<label style="margin:0">N' + (k + 1) + '</label>' + inp('crits.' + i + '.pts.' + k, pts[k], String(k + 1), 64)).join('') + '</div>'
-        : '<div class="flex" style="margin-top:8px"><label style="margin:0">Points maximum</label>' + inp('crits.' + i + '.max', c.max, '4', 70) + '<span class="muted">→ ' + Array.from({ length: L }, (_, k) => 'N' + (k + 1) + ' = ' + nf((k + 1) * (numv(c.max) || 0) / L)).join(' · ') + '</span></div>') +
-      (L === 4 ? '<label class="chk"><input type="checkbox"' + (c.auto ? ' checked' : '') + ' onchange="bSet(\'crits.' + i + '.auto\',this.checked)"> Proposer le niveau d’après l’écart estimation / réalisé</label>' + (c.auto ? '<div class="flex">N4 si ≤ ' + inp('crits.' + i + '.th.0', (c.th || [7])[0], '7', 60) + ' s · N3 si ≤ ' + inp('crits.' + i + '.th.1', (c.th || [7, 15])[1], '15', 60) + ' s · N2 si ≤ ' + inp('crits.' + i + '.th.2', (c.th || [7, 15, 24])[2], '24', 60) + ' s · sinon N1</div>' : '') : '') + '</div>';
-  }).join('') + '<button class="secondary" onclick="bMut(b=>b.crits.push({id:sid(\'k\'),name:\'\',levels:4,max:\'4\'}))">+ Ajouter un critère</button></div>';
-  // Répartition
-  const sp = b.split || {}, opts = b.crits.map(c => '<option value="' + c.id + '">' + escapeHtml(c.name || 'Critère') + '</option>').join('');
-  h += '<div class="wstep"><h3><b>5</b>Répartition au choix de l’élève <span class="muted">(option, comme AFL2 / AFL3 au bac)</span></h3>' +
-    (b.crits.length < 2 ? '<p class="muted">Ajoute au moins deux critères pour utiliser cette option.</p>' :
-      '<label class="chk"><input type="checkbox"' + (sp.on ? ' checked' : '') + ' onchange="bMut(b=>{b.split=b.split||{};b.split.on=this.checked;if(!b.split.a)b.split.a=b.crits[0].id;if(!b.split.b)b.split.b=b.crits[1].id;if(!b.split.options)b.split.options=\'2-6, 4-4, 6-2\'})"> L’élève choisit comment répartir les points entre deux critères</label>' +
-      (sp.on ? '<div class="flex"><select onchange="bSet(\'split.a\',this.value)">' + opts.replace('value="' + sp.a + '"', 'value="' + sp.a + '" selected') + '</select><span>et</span><select onchange="bSet(\'split.b\',this.value)">' + opts.replace('value="' + sp.b + '"', 'value="' + sp.b + '" selected') + '</select></div><label>Choix possibles (points du 1er - points du 2e)</label>' + inp('split.options', sp.options, '2-6, 4-4, 6-2', 260) + '<p class="muted">Dans chaque critère, le niveau donne une part du maximum choisi par l’élève (ex. sur 6 : N1 = 1,5 · N2 = 3 · N3 = 4,5 · N4 = 6).</p>' : '')) + '</div>';
+        : '<div class="flex" style="margin-top:8px"><label style="margin:0">Sur combien de points ?</label>' + inp('crits.' + i + '.max', c.max, '4', 70) + '<span class="muted">→ ' + Array.from({ length: L }, (_, k) => 'N' + (k + 1) + ' = ' + nf((k + 1) * (numv(c.max) || 0) / L)).join(' · ') + '</span></div>')) +
+      (L === 4 ? '<label class="chk"><input type="checkbox"' + (c.auto ? ' checked' : '') + ' onchange="bSet(\'crits.' + i + '.auto\',this.checked)"> Proposer le niveau automatiquement d’après le respect de l’estimation</label>' + (c.auto ? '<div class="flex">N4 si ≤ ' + inp('crits.' + i + '.th.0', (c.th || [7])[0], '7', 60) + ' s · N3 si ≤ ' + inp('crits.' + i + '.th.1', (c.th || [7, 15])[1], '15', 60) + ' s · N2 si ≤ ' + inp('crits.' + i + '.th.2', (c.th || [7, 15, 24])[2], '24', 60) + ' s · sinon N1</div>' : '') : '') + '</div>';
+  }).join('') + '<button class="secondary" onclick="bMut(b=>b.crits.push({id:sid(\'k\'),name:\'\',levels:4,max:\'4\'}))">+ Ajouter ce que je note</button></div>';
+  // Répartition au choix
+  const sp = b.split || {}, opts = cur => b.crits.map(c => '<option value="' + c.id + '"' + (c.id === cur ? ' selected' : '') + '>' + escapeHtml(c.name || 'Sans nom') + '</option>').join('');
+  h += '<div class="wstep"><h3><b>5</b>L’élève choisit sa répartition des points ? <span class="muted">(facultatif, comme AFL2 / AFL3 au bac)</span></h3>' +
+    '<label class="chk"><input type="checkbox"' + (sp.on ? ' checked' : '') + ' onchange="barSplit(this.checked)"> Oui : l’élève répartit des points entre deux éléments (par exemple 2-6, 4-4 ou 6-2)</label>' +
+    (sp.on && b.crits.length >= 2 ? '<div class="flex"><span>Entre</span><select onchange="bSet(\'split.a\',this.value)">' + opts(sp.a) + '</select><span>et</span><select onchange="bSet(\'split.b\',this.value)">' + opts(sp.b) + '</select></div><label>Répartitions possibles</label>' + inp('split.options', sp.options, '2-6, 4-4, 6-2', 260) + '<p class="muted">Exemple : avec 6-2, le 1er élément est sur 6 points et le 2e sur 2. Chaque niveau donne une part de ces points (sur 6 : N1 = 1,5 · N2 = 3 · N3 = 4,5 · N4 = 6).</p>' : '') + '</div>';
   h += '<p id="barTotal" class="notice">' + barTotalHTML(b) + '</p>';
   box.innerHTML = h;
 }
@@ -238,6 +247,18 @@ async function barApplyPaste() {
   const txt = $('barPasteBox').value, tg = barPaste?.target; if (!txt.trim()) return;
   if (tg === 'perf') { const rows = parsePerfText(txt); if (!rows || !rows.length) return alert('Je n’ai pas trouvé de temps et de points dans ce texte. Vérifie que le tableau contient les temps (ex. 4’30) et les points.'); barPaste = null; await bMut(b => { b.perf.rows = rows; }); alert(rows.length + ' paliers lus. Vérifie-les dans le tableau.'); }
   else { const rows = parsePairText(txt); if (!rows || !rows.length) return alert('Je n’ai pas trouvé de valeurs et de points dans ce texte.'); barPaste = null; await bMut(b => { b.calcs[tg].rows = rows; }); alert(rows.length + ' paliers lus. Vérifie-les dans le tableau.'); }
+}
+async function barSplit(on) {
+  await bMut(b => {
+    b.split = b.split || {}; b.split.on = on;
+    if (on) {
+      while (b.crits.length < 2) b.crits.push({ id: sid('k'), name: b.crits.length ? 'AFL3 · Rôle' : 'AFL2 · S’entraîner', levels: 4, max: '4' });
+      const ids = b.crits.map(c => c.id);
+      if (!ids.includes(b.split.a)) b.split.a = ids[0];
+      if (!ids.includes(b.split.b) || b.split.b === b.split.a) b.split.b = ids.find(x => x !== b.split.a);
+      if (!b.split.options) b.split.options = '2-6, 4-4, 6-2';
+    }
+  });
 }
 async function barLinkTpl(tid) { const b = curBar(); if (!b) return; state.templates.forEach(t => { if (t.bareme === b.id && t.id !== tid) t.bareme = undefined; }); const t = tplById(tid); if (t) t.bareme = b.id; await persist(); render(); }
 
