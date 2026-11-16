@@ -407,6 +407,9 @@ function baremeFromRows(rows, fullText) {
 }
 async function importBareme(e) {
   const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+  if (/^image\//.test(f.type) || /\.(png|jpe?g|heic|webp)$/i.test(f.name)) { // photo ou capture d'écran d'un barème
+    await newBareme(); barStepFor = barEdit; barStep = 2; renderBarWizard(); return barPhoto({ target: { files: [f], value: '' } }, 'perf');
+  }
   try {
     let rows = [], text = '';
     if (/\.docx$/i.test(f.name)) {
