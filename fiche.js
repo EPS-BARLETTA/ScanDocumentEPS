@@ -140,7 +140,7 @@
         for (let k = 0; k < g.n; k++) {
           const cx = n2(g.x + k * lay.sp), lb = g.labels ? String(g.labels[k]) : String(k);
           o.push('<circle cx="' + cx + '" cy="' + y + '" r="' + n2(lay.r) + '" fill="none" stroke="#666" stroke-width="0.25"/>');
-          o.push(text(cx, y + lay.r * 0.42, n2(Math.min(1.9, lay.r * (lb.length > 1 ? 0.85 : 1.2))), lb, ' text-anchor="middle" fill="#999"'));
+          { const fs = Math.min(2.4, lay.r * (lb.length > 1 ? 1.05 : 1.5)); o.push(text(cx, y + fs * 0.36, n2(fs), lb, ' text-anchor="middle" fill="#444" font-weight="700"')); }
         }
       });
       o.push('<rect x="' + (F.corr.x - F.corr.s / 2) + '" y="' + n2(y - F.corr.s / 2) + '" width="' + F.corr.s + '" height="' + F.corr.s + '" fill="none" stroke="#666" stroke-width="0.25"/>');
