@@ -296,3 +296,16 @@ function stickyResults() {
 }
 const _renderResultsSticky = renderResults;
 renderResults = function () { _renderResultsSticky(); try { stickyResults(); requestAnimationFrame(stickyResults); } catch (e) { } };
+
+/* ---------- Refaire une évaluation (nouvelle session, sans mélanger avec l'ancienne) ---------- */
+async function redoEval(tid) {
+  const s = tplById(tid); if (!s) return;
+  const base = s.name.replace(/\s+—\s+(évaluation|session|séance).*$/i, '');
+  const name = prompt('Nom de la nouvelle évaluation (les résultats de « ' + s.name + ' » restent à part) :', base + ' — évaluation du ' + new Date().toLocaleDateString('fr-FR'));
+  if (!name || !name.trim()) return;
+  const t = JSON.parse(JSON.stringify(s)); t.id = sid('t'); t.name = name.trim(); t.locked = false; t.printedFor = []; t.createdAt = today();
+  t.blocks.forEach(b => b.rows.forEach(r => { r.id = sid('r'); }));
+  state.templates.push(t); await persist(); render();
+  alert('« ' + t.name + ' » est prête : même fiche, même barème, résultats séparés.\nLes choix AFL2-AFL3 des élèves sont repris.\nImprime maintenant les fiches de la classe.');
+  openEval({ tplId: t.id });
+}

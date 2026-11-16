@@ -224,7 +224,7 @@ function renderLibrary() {
     const pc = [...new Set((t.printedFor || []).map(p => className(p.classId)).filter(Boolean))];
     const sclasses = [...new Set(sc.map(x => className(x.classId)).filter(Boolean))];
     const info = [(lay.ok ? lay.fmt : '⚠') + ' · ' + t.blocks.reduce((a, b) => a + b.rows.length, 0) + ' lignes', 'Créée le ' + new Date(t.createdAt || today()).toLocaleDateString('fr-FR'), pc.length ? 'Imprimée pour : ' + pc.join(', ') : 'Jamais imprimée', sc.length ? sc.length + ' fiche(s) lue(s), ' + sc.filter(x => x.status === 'validated').length + ' validée(s)' + (sclasses.length ? ' · ' + sclasses.join(', ') : '') : 'Aucune fiche lue'];
-    return '<div class="card">' + thumb(t) + '<h4>' + escapeHtml(t.name) + (t.locked ? ' 🔒' : '') + '</h4><div class="muted">' + info.map(escapeHtml).join('<br>') + '</div><div class="acts"><button onclick="openEval({tplId:\'' + t.id + '\'})">🖨 Imprimer</button><button class="secondary" onclick="editTpl(\'' + t.id + '\')">Ouvrir</button></div></div>';
+    return '<div class="card">' + thumb(t) + '<h4>' + escapeHtml(t.name) + (t.locked ? ' 🔒' : '') + '</h4><div class="muted">' + info.map(escapeHtml).join('<br>') + '</div><div class="acts"><button onclick="openEval({tplId:\'' + t.id + '\'})">🖨 Imprimer</button><button class="secondary" onclick="editTpl(\'' + t.id + '\')">Ouvrir</button>' + (sc.length ? '<button class="secondary" onclick="redoEval(\'' + t.id + '\')">🔁 Refaire une évaluation</button>' : '') + '</div></div>';
   }).join('') || '<p class="muted">Aucune fiche : choisis un modèle ci-dessus ou crée une fiche vierge.</p>';
 }
 async function useModel(i) {
