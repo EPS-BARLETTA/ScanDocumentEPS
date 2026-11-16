@@ -309,3 +309,31 @@ async function redoEval(tid) {
   alert('« ' + t.name + ' » est prête : même fiche, même barème, résultats séparés.\nLes choix AFL2-AFL3 des élèves sont repris.\nImprime maintenant les fiches de la classe.');
   openEval({ tplId: t.id });
 }
+
+/* ---------- Tableau des résultats : afficher un seul AFL / critère à la fois ---------- */
+let resFilter = 'all';
+(() => { const st = document.createElement('style'); st.textContent = `
+.afltabs{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0 4px}.afltabs button{min-height:52px;font-size:17px;padding:10px 18px;border-radius:14px;background:#f1eefc;color:#3a3560;box-shadow:none}
+.afltabs button.on{color:#fff}.afltabs button.t-all.on{background:#3a3560}.afltabs button.t-a1.on{background:#3b82f6}.afltabs button.t-a2.on{background:#12a36b}.afltabs button.t-a3.on{background:#f5b400;color:#3a2a00}.afltabs button.t-a4.on{background:#0ea5b7}.afltabs button.t-a5.on{background:#ff5c8a}.afltabs button.t-a6.on{background:#6c4cf5}
+#resultsTable.filtered{min-width:0}
+`; document.head.appendChild(st); })();
+const grpOf = el => { const m = (el.className || '').match(/\ba([1-6])s?\b/); return m ? 'a' + m[1] : null; };
+function applyResFilter() {
+  const tb = $('resultsTable'); if (!tb || !tb.tHead) return;
+  const groups = [...(tb.tHead.rows[0] ? tb.tHead.rows[0].cells : [])].filter(grpOf).map(c => ({ k: grpOf(c), label: c.textContent.split('/')[0].trim() }));
+  let bar = $('aflTabs');
+  if (!groups.length) { if (bar) bar.innerHTML = ''; return; }
+  if (!groups.some(g => g.k === resFilter)) resFilter = 'all';
+  if (!bar) { bar = document.createElement('div'); bar.id = 'aflTabs'; bar.className = 'afltabs'; const tw = document.querySelector('#results .tablewrap'); tw.parentNode.insertBefore(bar, tw); }
+  bar.innerHTML = '<button class="t-all' + (resFilter === 'all' ? ' on' : '') + '" onclick="resFilter=\'all\';applyResFilter()">Tout</button>' + groups.map(g => '<button class="t-' + g.k + (resFilter === g.k ? ' on' : '') + '" onclick="resFilter=\'' + g.k + '\';applyResFilter()">' + escapeHtml(g.label) + '</button>').join('');
+  tb.querySelectorAll('th,td').forEach(c => { const g = grpOf(c); c.style.display = resFilter !== 'all' && g && g !== resFilter ? 'none' : ''; });
+  // colonnes communes inutiles pour l'AFL affiché : F/G seulement pour la performance, choix seulement pour les AFL au choix
+  const firstK = groups[0] && groups[0].k, hide = new Set(); let col = 0;
+  [...tb.tHead.rows[0].cells].forEach(c => { const t = c.textContent; if (!grpOf(c) && resFilter !== 'all') { if (/^F\/G/.test(t) && resFilter !== firstK) hide.add(col); if (/^Choix/.test(t) && resFilter === firstK) hide.add(col); } if (hide.has(col)) c.style.display = 'none'; col += c.colSpan; });
+  if (hide.size) [...tb.tBodies[0].rows].forEach(tr => { let k = 0; [...tr.cells].forEach(c => { if (hide.has(k)) c.style.display = 'none'; k += c.colSpan; }); });
+  tb.classList.toggle('filtered', resFilter !== 'all');
+  try { stickyResults(); } catch (e) { }
+  const w = document.querySelector('#results .tablewrap'); if (w && resFilter !== 'all') w.scrollLeft = 0;
+}
+const _renderResultsFilter = renderResults;
+renderResults = function () { _renderResultsFilter(); try { applyResFilter(); } catch (e) { console.error(e); } };
