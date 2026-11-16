@@ -165,13 +165,14 @@
     return pages;
   }
 
-  const studentPayload = (sid, tid) => PREFIX + 'E:' + sid + ':' + tid;
+  const studentPayload = (sid, tid, name) => PREFIX + 'E:' + sid + ':' + tid + (name ? ':' + String(name).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/[^A-Z ]/g, '').trim().replace(/ +/g, '_').slice(0, 24) : '');
   const sparePayload = (cid, tid) => PREFIX + 'S:' + cid + ':' + tid;
   const namePayload = (name, tid) => PREFIX + 'N:' + encodeURIComponent(name) + ':' + tid;
+  function safeDecode(x) { try { return decodeURIComponent(x); } catch (e) { return x; } }
   function parsePayload(p) {
     if (typeof p !== 'string' || !p.startsWith(PREFIX)) return null;
     const parts = p.slice(PREFIX.length).split(':');
-    if (parts[0] === 'E' && parts[1]) return { kind: 'student', id: parts[1], tpl: parts[2] || null };
+    if (parts[0] === 'E' && parts[1]) return { kind: 'student', id: parts[1], tpl: parts[2] || null, name: parts[3] ? safeDecode(parts.slice(3).join(':')).replace(/_/g, ' ') : null };
     if (parts[0] === 'S' && parts[1]) return { kind: 'spare', classId: parts[1], tpl: parts[2] || null };
     if (parts[0] === 'N' && parts[1]) return { kind: 'name', name: decodeURIComponent(parts[1]), tpl: parts[2] || null };
     return null;
@@ -265,13 +266,13 @@
     // les repères (6 mm) sont les plus gros carrés pleins : on écarte ce qui est nettement plus petit (bulles, QR)
     const big = sorted.length ? sorted.filter((p, i) => i < 4 || p.n >= 0.45 * sorted[Math.min(2, sorted.length - 1)].n) : [];
     const top = big.slice(0, 12);
-    let best = null, bestA = 0;
+    let best = null, bestA = 0; const alts = [];
     for (let a = 0; a < top.length; a++) for (let b = a + 1; b < top.length; b++) for (let c = b + 1; c < top.length; c++) for (let d = c + 1; d < top.length; d++) {
       const q = [top[a], top[b], top[c], top[d]], ns = q.map(p => p.n);
       if (Math.min(...ns) < 0.4 * Math.max(...ns)) continue;
-      const A = quadArea(q); if (A > bestA && quadOK(q)) { bestA = A; best = q; }
+      const A = quadArea(q); if (quadOK(q)) { if (A > 0.04 * w * h) alts.push({ q, A }); if (A > bestA) { bestA = A; best = q; } }
     }
-    if (best && bestA > 0.04 * w * h) return best;
+    if (best && bestA > 0.04 * w * h) { best.alts = alts.sort((x, y) => y.A - x.A); return best; }
     if (!gray) return null;
     // Un repère manquant (ombre, bord) : on part des trois meilleurs, on prédit le quatrième et on le cherche localement
     let tri = null, triA = 0;
@@ -326,6 +327,36 @@
     return gray[i] * (1 - fx) * (1 - fy) + gray[i + 1] * fx * (1 - fy) + gray[i + w] * (1 - fx) * fy + gray[i + w + 1] * fx * fy;
   }
 
+  // Contraste du contour imprimé des bulles d'une ligne pour un petit décalage (dx, dy) en mm
+  function ringScore(gray, w, h, H, R, lay, dx, dy) {
+    let s = 0, n = 0; const r = lay.r;
+    for (const g of R.groups) for (let k = 0; k < g.n; k++) {
+      const cx = g.x + k * lay.sp + dx, cy = R.y + dy;
+      for (let i = 0; i < 12; i++) { const t = i * Math.PI / 6, [u, v] = H(cx + r * Math.cos(t), cy + r * Math.sin(t)); s -= bilinear(gray, w, h, u, v); }
+      for (const t of [Math.PI / 2, -Math.PI / 2, Math.PI / 3, -Math.PI / 3, 2 * Math.PI / 3, -2 * Math.PI / 3]) { const [u, v] = H(cx + 1.3 * r * Math.cos(t), cy + 1.3 * r * Math.sin(t)); s += 2 * bilinear(gray, w, h, u, v); }
+      n++;
+    }
+    return s / Math.max(1, n);
+  }
+  function bubbleShift(gray, w, h, H, cx, cy, r, pd) {
+    let best = [0, 0], bs = -1e9; const M = 0.6, st = 0.15;
+    for (let dy = -M; dy <= M + 1e-6; dy += st) for (let dx = -M; dx <= M + 1e-6; dx += st) {
+      let s = 0;
+      for (let i = 0; i < 16; i++) { const t = i * Math.PI / 8, [u, v] = H(cx + dx + r * Math.cos(t), cy + dy + r * Math.sin(t)); s -= bilinear(gray, w, h, u, v); }
+      for (const t of [Math.PI / 2, -Math.PI / 2, Math.PI / 3, -Math.PI / 3, 2 * Math.PI / 3, -2 * Math.PI / 3]) { const [u, v] = H(cx + dx + 1.3 * r * Math.cos(t), cy + dy + 1.3 * r * Math.sin(t)); s += 16 / 6 * bilinear(gray, w, h, u, v); }
+      s -= 10 * Math.hypot(dx - pd[0] * 0.5, dy - pd[1] * 0.5);
+      if (s > bs) { bs = s; best = [dx, dy]; }
+    }
+    return best;
+  }
+  function rowShift(gray, w, h, H, R, lay, prev) {
+    let best = prev, bs = -1e9; const st = 0.25, M = 1.5;
+    for (let dy = -M; dy <= M + 1e-6; dy += st) for (let dx = -M; dx <= M + 1e-6; dx += st) {
+      const sc = ringScore(gray, w, h, H, R, lay, dx, dy) - 0.5 * Math.hypot(dx - prev[0], dy - prev[1]);
+      if (sc > bs) { bs = sc; best = [dx, dy]; }
+    }
+    return best;
+  }
   function sampleDisk(gray, w, h, H, cx, cy, rad) {
     let s = 0, n = 0;
     for (const f of [0, 0.35, 0.7]) {
@@ -420,9 +451,24 @@
     res.tplId = tpl.id;
     const lay = layoutFor(tpl);
     if (!lay.ok) { res.issues.push(lay.error); return res; }
+    // Pile de fiches : les repères de la feuille du dessous peuvent former un plus grand cadre → on garde le cadre aux bonnes proportions
+    if (opts.debug) res.dbgAlts = (pts.alts || []).map(a => ({ A: Math.round(a.A), q: a.q.map(p => [Math.round(p.x), Math.round(p.y)]) }));
+    if (pts.alts && pts.alts.length > 1) {
+      const exp = (lay.F.H - 2 * INSET) / (lay.F.W - 2 * INSET), loc = qr && qr.location;
+      const err = q => { const o = orderMarkers(q, loc), d = (a, b) => Math.hypot(a.x - b.x, a.y - b.y), L = d(o[0], o[3]), R = d(o[1], o[2]), T = d(o[0], o[1]), B = d(o[3], o[2]);
+        return Math.abs((L + R) / (T + B) / exp - 1) + Math.abs(L - R) / (L + R) + Math.abs(T - B) / (T + B); };
+      const Am = pts.alts[0].A, sc = a => err(a.q) - 0.15 * a.A / Am, big = pts.alts.slice().sort((a, b) => sc(a) - sc(b))[0];
+      if (big && big.q !== pts) { ordered = orderMarkers(big.q, loc); H = null; }
+    }
     if (!H || F.fmt !== lay.fmt) { F = lay.F; H = homography(F.markers, ordered); }
     if (!H) { res.issues.push('Photo trop déformée : reprends-la de face'); return res; }
     res.markers = true;
+    // bandeau du nom imprimé, redressé (pour reconnaître l'élève si son QR vient d'une ancienne liste)
+    if (res.ref && res.ref.kind === 'student') {
+      const k = 8, x0 = 24, x1 = Math.min(F.qr.x - 2, 24 + 95), y0 = 19.2, y1 = 26.8, nw = Math.round((x1 - x0) * k), nh = Math.round((y1 - y0) * k), g = new Uint8ClampedArray(nw * nh);
+      for (let j = 0; j < nh; j++) for (let i = 0; i < nw; i++) { const [u, v] = H(x0 + i / k, y0 + j / k); g[j * nw + i] = bilinear(gray, w, h, u, v); }
+      res.nameStrip = { w: nw, h: nh, g };
+    }
     if (opts.debug) res.dbg = { ordered, H, lay };
     if (qr) {
       const [qx, qy] = H(F.qr.x + QR / 2, F.qr.y + QR / 2), loc = qr.location;
@@ -431,16 +477,30 @@
       if (Math.hypot(qx - cx, qy - cy) > 0.08 * Math.hypot(bx - ax, by - ay)) res.issues.push('Repérage douteux : vérifie les valeurs sur la photo');
     }
     const titles = lay.blocks.map(b => b.title), filled = titles.map(() => 0), pend = titles.map(() => []);
+    let prev = [0, 0];
     for (const R of lay.rows) {
-      const { row, y } = R;
-      const vals = R.groups.map(g => Array.from({ length: g.n }, (_, k) => sampleDisk(gray, w, h, H, g.x + k * lay.sp, y, lay.r * 0.62)));
-      const smp = R.groups.map(g => Array.from({ length: g.n }, (_, k) => diskSamples(gray, w, h, H, g.x + k * lay.sp, y, lay.r * 0.8)));
-      const allS = smp.flat(2).sort((a, b) => a - b), paper = allS[Math.floor(allS.length * 0.8)], cut = paper * 0.8;
-      const digits = vals.map((v, gi) => merge(readGroup(v), readInk(smp[gi].map(arr => arr.filter(x => x < cut).length / arr.length))));
-      // temps sous la minute : colonne « minutes » laissée vide = 0
-      if (row.type === 'time' && digits[0].state === 'empty' && digits[1].state !== 'empty' && digits[2].state !== 'empty') digits[0] = { digit: 0, state: 'ok' };
+      const { row } = R;
+      // recalage local de la ligne (feuille gondolée, photo pas tout à fait à plat)
+      const [ox, oy] = opts.noShift ? [0, 0] : rowShift(gray, w, h, H, R, lay, prev); prev = [ox, oy];
+      const y = R.y + oy, G = R.groups.map(g => Object.assign({}, g, { x: g.x + ox }));
+      // chaque bulle est recentrée sur son contour imprimé (feuille pas tout à fait plane) ; si la ligne reste illisible, on garde la position calculée
+      const readAt = shift => {
+        const C = G.map(g => { let pd = [0, 0]; return Array.from({ length: g.n }, (_, k) => { const c = shift ? bubbleShift(gray, w, h, H, g.x + k * lay.sp, y, lay.r, pd) : [0, 0]; pd = c; return [g.x + k * lay.sp + c[0], y + c[1]]; }); });
+        // fond local (papier juste au-dessus et au-dessous de chaque bulle) : corrige ombres et dégradés de lumière
+        const P = C.map(g => g.map(([cx, cy]) => { const a = []; for (const t of [-2.1, -1.57, -1.05, 1.05, 1.57, 2.1]) { const [u, v] = H(cx + 1.45 * lay.r * Math.cos(t), cy + 1.45 * lay.r * Math.sin(t)); a.push(bilinear(gray, w, h, u, v)); } a.sort((x, z) => x - z); return Math.max(20, a[3]); }));
+        const vals = C.map((g, gi) => g.map(([cx, cy], k) => sampleDisk(gray, w, h, H, cx, cy, lay.r * 0.62) * 200 / P[gi][k]));
+        const smp = C.map((g, gi) => g.map(([cx, cy], k) => diskSamples(gray, w, h, H, cx, cy, lay.r * 0.8).map(x => x * 200 / P[gi][k])));
+        const allS = smp.flat(2).sort((a, b) => a - b), paper = allS[Math.floor(allS.length * 0.8)], cut = paper * 0.8;
+        const digits = vals.map((v, gi) => merge(readGroup(v), readInk(smp[gi].map(arr => arr.filter(x => x < cut).length / arr.length))));
+        if (row.type === 'time' && digits[0].state === 'empty' && digits[1].state !== 'empty' && digits[2].state !== 'empty') digits[0] = { digit: 0, state: 'ok' };
+        if (opts.debug) (res.dbgRows = res.dbgRows || []).push({ shift, c: C.flat().map(([a, b]) => H(a, b).map(Math.round)), l: row.label, v: vals.map(a => a.map(Math.round).join(' ')), paper: Math.round(paper) });
+        return { vals, digits };
+      };
+      let rd = readAt(!opts.noShift);
+      if (!opts.noShift && rd.digits.some(d => d.state !== 'ok')) { const r0 = readAt(false); if (r0.digits.every(d => d.state === 'ok')) rd = r0; }
+      const { vals, digits } = rd;
       const all = vals.flat().sort((a, b) => a - b), med = all[Math.floor(all.length / 2)];
-      const corr = sampleDisk(gray, w, h, H, F.corr.x, y, 1.3) < med * 0.8;
+      const corrP = [[0, -2.9], [0, 2.9], [-3.2, 0], [3.2, 0]].map(([a, b]) => { const [u, v] = H(F.corr.x + a, y + b); return bilinear(gray, w, h, u, v); }).sort((a, b) => a - b), corr = sampleDisk(gray, w, h, H, F.corr.x, y, 1.3) * 200 / Math.max(20, corrP[2]) < med * 0.8;
       const where = (titles[R.block] ? titles[R.block] + ' · ' : '') + row.label;
       const nEmpty = digits.filter(d => d.state === 'empty').length;
       if (nEmpty === digits.length) { pend[R.block].push(corr ? where + ' : correction signalée, valeur écrite à reporter' : where + ' : ligne vide'); continue; }
@@ -456,6 +516,14 @@
     titles.forEach((t, i) => {
       if (!filled[i]) res.issues.push((t || 'Bloc ' + (i + 1)) + ' non rempli');
       else pend[i].forEach(x => res.issues.push(x));
+    });
+    // temps de passage cumulés : chacun doit être plus grand que le précédent
+    if (tpl.cumulative !== false) (tpl.blocks || []).forEach(b => {
+      let last = -1;
+      b.rows.filter(r => r.type === 'time' && !/estim/i.test(r.label)).forEach(r => {
+        const v = res.values[r.id], m = v && /^(\d+):(\d\d)$/.exec(v); if (!m) return;
+        const t = +m[1] * 60 + +m[2]; if (t <= last) res.issues.push((b.title ? b.title + ' · ' : '') + r.label + ' : temps plus petit que le précédent, vérifie'); last = t;
+      });
     });
     return res;
   }

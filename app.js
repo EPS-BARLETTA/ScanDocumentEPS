@@ -479,10 +479,10 @@ function evTiles() {
 }
 function evSelection() {
   const t = tplById($('evTpl').value), lay = t ? Fiche.layoutFor(t) : null;
-  if (evCtx.studentId) { const s = state.students.find(x => x.id === evCtx.studentId); return { t, lay, groups: [{ c: s.classId, list: [{ tpl: t, name: s.name, className: className(s.classId), payload: Fiche.studentPayload(s.id, t.id) }] }] }; }
+  if (evCtx.studentId) { const s = state.students.find(x => x.id === evCtx.studentId); return { t, lay, groups: [{ c: s.classId, list: [{ tpl: t, name: s.name, className: className(s.classId), payload: Fiche.studentPayload(s.id, t.id, s.name) }] }] }; }
   const spare = Math.max(0, Math.min(10, parseInt($('evSpare').value, 10) || 0));
   const cids = [...document.querySelectorAll('#evClasses input:checked')].map(x => x.value);
-  const groups = cids.map(c => ({ c, list: state.students.filter(s => s.classId === c).sort((a, b) => a.name.localeCompare(b.name, 'fr')).map(s => ({ tpl: t, name: s.name, className: className(c), payload: Fiche.studentPayload(s.id, t.id) })).concat(Array.from({ length: spare }, () => ({ tpl: t, spare: true, className: className(c), payload: Fiche.sparePayload(c, t.id) }))) }));
+  const groups = cids.map(c => ({ c, list: state.students.filter(s => s.classId === c).sort((a, b) => a.name.localeCompare(b.name, 'fr')).map(s => ({ tpl: t, name: s.name, className: className(c), payload: Fiche.studentPayload(s.id, t.id, s.name) })).concat(Array.from({ length: spare }, () => ({ tpl: t, spare: true, className: className(c), payload: Fiche.sparePayload(c, t.id) }))) }));
   return { t, lay, groups };
 }
 function evInfo() {
@@ -635,7 +635,36 @@ function editScan(id) {
 /* ---------- Scan par lot ---------- */
 function compressPhoto(file) { return new Promise((resolve, reject) => { const img = new Image(), url = typeof file === 'string' ? file : URL.createObjectURL(file); img.onload = () => { const canvas = document.createElement('canvas'), scale = Math.min(1, 1400 / img.width, 1900 / img.height); canvas.width = Math.round(img.width * scale); canvas.height = Math.round(img.height * scale); canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height); if (typeof file !== 'string') URL.revokeObjectURL(url); resolve(canvas.toDataURL('image/jpeg', .7)); }; img.onerror = () => reject(Error('Photo illisible')); img.src = url; }); }
 function readOpts() { return { templateFor: ref => tplById(ref.tpl || 't2x800') || LIBRARY.find(l => l.id === (ref.tpl || 't2x800')), fallback: tplById($('batchTpl').value) }; }
-async function readSafe(src) { try { return await Fiche.read(src, readOpts()); } catch (err) { return { markers: false, ref: null, values: {}, tplId: null, issues: ['Lecture impossible : ' + err.message] }; } }
+async function readSafe(src) {
+  let read;
+  try { read = await Fiche.read(src, readOpts()); } catch (err) { return { markers: false, ref: null, values: {}, tplId: null, issues: ['Lecture impossible : ' + err.message] }; }
+  // QR d'une ancienne liste (élève réimporté, autre appareil…) : on retrouve l'élève par son nom
+  if (read.ref?.kind === 'student' && !state.students.some(s => s.id === read.ref.id)) {
+    let st = read.ref.name ? matchName(read.ref.name, 0.9) : null;
+    if (!st && read.nameStrip) { try { const txt = await ocrStrip(read.nameStrip); st = matchName(txt, 0.72); } catch (e) { } }
+    if (st) { read.ref = Object.assign({}, read.ref, { id: st.id }); read.issues.unshift('Élève reconnu par son nom imprimé : ' + st.name); }
+  }
+  delete read.nameStrip;
+  return read;
+}
+function nameKey(x) { return String(x || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().replace(/[^A-Z]/g, ''); }
+function lev(a, b) { const d = Array.from({ length: b.length + 1 }, (_, j) => j); for (let i = 1; i <= a.length; i++) { let p = d[0]; d[0] = i; for (let j = 1; j <= b.length; j++) { const t = d[j]; d[j] = Math.min(d[j] + 1, d[j - 1] + 1, p + (a[i - 1] === b[j - 1] ? 0 : 1)); p = t; } } return d[b.length]; }
+function matchName(txt, min) {
+  const k = nameKey(txt); if (k.length < 3) return null;
+  const sc = state.students.map(s => { const n = nameKey(s.name); let best = 1 - lev(k, n) / Math.max(k.length, n.length);
+    if (k.length > n.length) for (let i = 0; i + n.length <= k.length; i++) best = Math.max(best, 1 - lev(k.slice(i, i + n.length), n) / n.length - 0.05); // texte lu avec des caractères en trop
+    return { s, v: best }; }).sort((a, b) => b.v - a.v);
+  return sc[0] && sc[0].v >= min && (!sc[1] || sc[0].v - sc[1].v >= 0.08) ? sc[0].s : null;
+}
+let ocrWorker = null;
+async function ocrStrip(N) {
+  const c = document.createElement('canvas'); c.width = N.w * 2; c.height = N.h * 2; const x = c.getContext('2d'), tmp = document.createElement('canvas'); tmp.width = N.w; tmp.height = N.h;
+  const im = tmp.getContext('2d').createImageData(N.w, N.h); for (let i = 0; i < N.g.length; i++) { im.data[4 * i] = im.data[4 * i + 1] = im.data[4 * i + 2] = N.g[i]; im.data[4 * i + 3] = 255; }
+  tmp.getContext('2d').putImageData(im, 0, 0); x.imageSmoothingQuality = 'high'; x.drawImage(tmp, 0, 0, c.width, c.height);
+  if (!window.Tesseract) await loadScript('https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js');
+  if (!ocrWorker) { ocrWorker = await Tesseract.createWorker('fra'); await ocrWorker.setParameters({ tessedit_pageseg_mode: '7' }); }
+  const { data } = await ocrWorker.recognize(c); return data.text || '';
+}
 function addFromRead(read, photo, classId) {
   const norm = x => String(x || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
   let st = read.ref?.kind === 'student' ? state.students.find(s => s.id === read.ref.id) : null;
@@ -684,6 +713,11 @@ async function captureBatch(e) {
   $('batchCount').textContent = [Object.keys(byTpl).length ? 'Reconnu : ' + Object.entries(byTpl).map(([n, k]) => k + ' × ' + n + (bar(state.templates.find(t => t.name === n)?.bareme) ? ' (barème : ' + bar(state.templates.find(t => t.name === n).bareme).name + ')' : '')).join(' · ') : '', auto ? '✓ ' + auto + ' fiche(s) lue(s) et rangée(s) dans les Résultats' : '', manual ? manual + ' fiche(s) à vérifier ci-dessous' : ''].filter(Boolean).join(' · ') + '.';
 }
 function valuesSummary(tid, values) { const t = tplById(tid) || LIBRARY.find(l => l.id === tid); if (!t) return Object.values(values).join(' · '); return t.blocks.map(b => (b.title ? b.title + ' : ' : '') + b.rows.map(r => values[r.id] ?? '—').join(' / ')).join(' · '); }
+async function rereadAll() {
+  const ids = state.queue.map(q => q.id); let ok = 0;
+  for (let i = 0; i < ids.length; i++) { const q = state.queue.find(x => x.id === ids[i]); if (!q) continue; $('batchCount').textContent = 'Relecture ' + (i + 1) + ' / ' + ids.length + '…'; const read = await readSafe(q.photo); state.queue = state.queue.filter(x => x.id !== q.id); if (addFromRead(read, q.photo, q.classId)) ok++; }
+  await persist(); render(); $('batchCount').textContent = ok + ' fiche(s) rangée(s) dans les résultats sur ' + ids.length + '.';
+}
 async function rereadBatch(id) { const q = state.queue.find(x => x.id === id); if (!q) return; const read = await readSafe(q.photo); state.queue = state.queue.filter(x => x.id !== id); const ok = addFromRead(read, q.photo, q.classId); await persist(); render(); $('batchCount').textContent = ok ? 'Fiche relue et rangée dans les résultats' : 'Fiche toujours à traiter : ' + read.issues.join(' · '); }
 async function deleteBatch(id) { if (!confirm('Supprimer cette photo ?')) return; state.queue = state.queue.filter(x => x.id !== id); await persist(); renderBatch(); }
 function renderBatch() {
@@ -691,7 +725,7 @@ function renderBatch() {
   renderBatchProgress();
   const c = $('batchClass').value, items = state.queue.filter(x => x.classId === c);
   if (!batchBusy) $('batchCount').textContent = items.length ? items.length + ' fiche(s) à vérifier ci-dessous.' : 'Les fiches reconnues vont directement dans les Résultats.';
-  $('batchGallery').innerHTML = items.map(x => '<div class="rowcard"><img class="preview" style="width:100%;max-height:260px" src="' + x.photo + '"><p class="muted">' + escapeHtml(x.read?.issues?.length ? x.read.issues.join(' · ') : 'Lecture non effectuée') + '</p>' + (x.read && Object.keys(x.read.values || {}).length ? '<p><b>Valeurs lues :</b> ' + escapeHtml(valuesSummary(x.read.tplId, x.read.values)) + '</p>' : '') + '<button onclick="reviewBatch(\'' + x.id + '\')">Vérifier / associer</button> <button class="secondary" onclick="rereadBatch(\'' + x.id + '\')">Relire</button> <button class="secondary" onclick="deleteBatch(\'' + x.id + '\')">Supprimer</button></div>').join('');
+  $('batchGallery').innerHTML = (items.length > 1 ? '<p><button class="secondary" onclick="rereadAll()">🔄 Relire toutes ces fiches</button></p>' : '') + items.map(x => '<div class="rowcard"><img class="preview" style="width:100%;max-height:260px" src="' + x.photo + '"><p class="muted">' + escapeHtml(x.read?.issues?.length ? x.read.issues.join(' · ') : 'Lecture non effectuée') + '</p>' + (x.read && Object.keys(x.read.values || {}).length ? '<p><b>Valeurs lues :</b> ' + escapeHtml(valuesSummary(x.read.tplId, x.read.values)) + '</p>' : '') + '<button onclick="reviewBatch(\'' + x.id + '\')">Vérifier / associer</button> <button class="secondary" onclick="rereadBatch(\'' + x.id + '\')">Relire</button> <button class="secondary" onclick="deleteBatch(\'' + x.id + '\')">Supprimer</button></div>').join('');
 }
 function reviewBatch(id) {
   const q = state.queue.find(x => x.id === id); if (!q) return;
