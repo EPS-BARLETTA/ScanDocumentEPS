@@ -54,7 +54,7 @@ function grade(t, s, m) {
   const B = bar(t.bareme); if (!B) return null;
   if (B.v2) return gradeV2(t, s, m, B);
   const n = (s.notes || {})[t.id] || {}, has = v => v !== undefined && v !== null && v !== '';
-  const choix = CHOIX[n.choix] ? n.choix : null, [max2, max3] = choix ? CHOIX[choix] : [null, null];
+  const nc = n.choix === '' ? null : (n.choix || defChoix(s)), choix = CHOIX[nc] ? nc : null, [max2, max3] = choix ? CHOIX[choix] : [null, null];
   const sexOk = s.sex === 'F' || s.sex === 'G', hasReg = B.reg.length > 0;
   const perf = m && m.best != null && sexOk ? perfPts(B, s.sex, m.best) : null;
   const reg = hasReg && m && m.pace != null ? regulPts(B, m.pace) : null;
@@ -71,11 +71,13 @@ function grade(t, s, m) {
   return { perf, reg, afl1, dEst, d2, d2auto, d3, p2, p3, max2, max3, role: n.role || '', choix, total, acquired, missing, noSex: !sexOk, B, hasReg, best: m?.best, pace: m?.pace, gap: m?.gap };
 }
 const nf = v => v == null ? '—' : String(Math.round(v * 100) / 100).replace('.', ',');
+// Choix de répartition AFL2-AFL3 déjà donné par l'élève (autre évaluation, préparation…) : repris par défaut
+function defChoix(s) { if (s.choix) return s.choix; let best = null; for (const k in (s.notes || {})) { const c = s.notes[k] && s.notes[k].choix; if (c) best = c; } return best; }
 async function setNote(sid, tid, k, v) {
   const s = state.students.find(x => x.id === sid); if (!s) return;
   if (k === 'sex') s.sex = s.sex === v ? undefined : (v || undefined);
   else if (k === 'disp') { s.notes = s.notes || {}; s.notes[tid] = s.notes[tid] || {}; s.notes[tid].disp = !s.notes[tid].disp; }
-  else { s.notes = s.notes || {}; s.notes[tid] = s.notes[tid] || {}; const cur = s.notes[tid][k]; s.notes[tid][k] = String(cur) === String(v) ? '' : v; if (k === 'd2tr') delete s.notes[tid].afl2tr; if (k === 'd3') delete s.notes[tid].afl3; }
+  else { s.notes = s.notes || {}; s.notes[tid] = s.notes[tid] || {}; const cur = k === 'choix' ? (s.notes[tid].choix === '' ? '' : (s.notes[tid].choix || defChoix(s))) : s.notes[tid][k]; s.notes[tid][k] = String(cur) === String(v) ? '' : v; if (k === 'choix' && s.notes[tid].choix) s.choix = s.notes[tid].choix; if (k === 'd2tr') delete s.notes[tid].afl2tr; if (k === 'd3') delete s.notes[tid].afl3; }
   await persist(); renderResults();
 }
 const schoolYear = () => { const d = new Date(), y = d.getFullYear(); return d.getMonth() >= 7 ? y + '-' + (y + 1) : (y - 1) + '-' + y; };

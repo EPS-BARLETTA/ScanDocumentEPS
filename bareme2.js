@@ -38,7 +38,7 @@ function estimLevel(c, g) { const th = (c.th || [7, 15, 24]).map(numv); return g
 
 function gradeV2(t, s, m, B) {
   const n = (s.notes || {})[t.id] || {}, sexOk = s.sex === 'F' || s.sex === 'G';
-  const choix = B.split && B.split.options.includes(n.choix) ? n.choix : null;
+  const nc = n.choix === '' ? null : (n.choix || defChoix(s)), choix = B.split && B.split.options.includes(nc) ? nc : null;
   const [ma, mb] = choix ? choix.split('-').map(numv) : [null, null];
   if (n.disp) return { v2: true, disp: true, B, choix, total: null, missing: [], acquired: 0, crits: [], calcs: [] };
   const finals = m ? m.blocks.filter(b => b.hasTime).map(b => b.final) : [];
@@ -366,16 +366,19 @@ async function barLinkTpl(tid) { const b = curBar(); if (!b) return; state.templ
 let fw = null;
 function openFicheWizard() { fw = { name: '', dist: 800, n: 2, step: 200, est: true }; editorOpen = false; render(); $('ficheWizard').scrollIntoView({ behavior: 'smooth' }); }
 function fwTpl() {
-  const d = Math.max(50, +fw.dist || 800), n = Math.max(1, Math.min(8, +fw.n || 1)), st = +fw.step || 0, ord = i => i === 1 ? '1er' : i + 'e';
+  const mixed = String(fw.mixed || '').split(/[^\d]+/).map(Number).filter(x => x >= 50).slice(0, 8);
+  const d0 = Math.max(50, +fw.dist || 800), n = mixed.length || Math.max(1, Math.min(8, +fw.n || 1)), st = +fw.step || 0, ord = i => i === 1 ? '1er' : i + 'e';
   const blocks = Array.from({ length: n }, (_, i) => {
+    const d = mixed.length ? mixed[i] : d0;
     const rows = []; if (fw.est) rows.push({ id: sid('r'), label: 'Estimation', type: 'time' });
     const pts = /[,;\s]/.test(String(fw.step).trim()) ? String(fw.step).split(/[,;\s]+/).map(Number).filter(x => x > 0 && x < d).sort((a, b) => a - b) : [];
     if (pts.length) pts.forEach(x => rows.push({ id: sid('r'), label: x + ' m', type: 'time' }));
     else if (st > 0) for (let x = st; x < d - 0.1; x += st) rows.push({ id: sid('r'), label: x + ' m', type: 'time' });
     rows.push({ id: sid('r'), label: d + ' m', type: 'time' });
-    return { title: n > 1 ? ord(i + 1) + ' ' + d + ' m' : d + ' m', rows };
+    return { title: mixed.length ? (mixed.filter(x => x === d).length > 1 ? ord(i + 1) + ' ' : '') + d + ' m' : n > 1 ? ord(i + 1) + ' ' + d + ' m' : d + ' m', rows };
   });
-  return { id: sid('t'), name: fw.name.trim() || (n > 1 ? n + ' × ' + d + ' m' : d + ' m'), format: 'auto', minutesMax: d >= 1000 ? 9 : 5, cumulative: true, blocks, createdAt: today(), printedFor: [] };
+  const dm = mixed.length ? Math.max(...mixed) : d0;
+  return { id: sid('t'), name: fw.name.trim() || (mixed.length ? mixed.join(' / ') + ' m' : n > 1 ? n + ' × ' + d0 + ' m' : d0 + ' m'), format: 'auto', minutesMax: dm >= 1000 ? 9 : 5, cumulative: true, blocks, createdAt: today(), printedFor: [] };
 }
 function renderFicheWizard() {
   const box = $('ficheWizard'); if (!box) return;
@@ -385,7 +388,8 @@ function renderFicheWizard() {
   box.innerHTML = '<div class="wiz-head"><span class="badge g-blue">📄</span><div class="grow"><small>Nouvelle fiche</small><input class="wiz-title" style="width:360px" value="' + escapeHtml(fw.name) + '" placeholder="' + escapeHtml(t.name) + '" onchange="fw.name=this.value;renderFicheWizard()"></div><button class="mini" onclick="fw=null;render()">Annuler</button></div>' +
     '<div class="grid2"><div>' +
     '<div class="wstep"><h3><b>1</b>Distance d’une course</h3><div class="flex">' + seg('dist', [[500, '500 m'], [800, '800 m'], [1000, '1000 m'], [1500, '1500 m']]) + '<input type="number" style="width:110px" value="' + fw.dist + '" onchange="fw.dist=+this.value;renderFicheWizard()"> m</div></div>' +
-    '<div class="wstep"><h3><b>2</b>Nombre de courses</h3>' + seg('n', [[1, '1'], [2, '2'], [3, '3'], [4, '4'], [5, '5'], [6, '6']]) + '</div>' +
+    '<div class="flex" style="margin-top:-6px;margin-bottom:12px"><label style="margin:0">Ou des distances différentes :</label><input style="width:200px" value="' + escapeHtml(fw.mixed || '') + '" placeholder="ex. 100, 500, 1000" onchange="fw.mixed=this.value;renderFicheWizard()"></div>' +
+    (String(fw.mixed || '').trim() ? '' : '<div class="wstep"><h3><b>2</b>Nombre de courses</h3>' + seg('n', [[1, '1'], [2, '2'], [3, '3'], [4, '4'], [5, '5'], [6, '6']]) + '</div>') +
     '<div class="wstep"><h3><b>3</b>Temps intermédiaires</h3><div class="flex">' + seg('step', [[0, 'Aucun'], [100, 'Tous les 100 m'], [200, 'Tous les 200 m'], [250, 'Tous les 250 m'], [400, 'Tous les 400 m']]) + '</div><div class="flex" style="margin-top:8px"><label style="margin:0">Autre :</label><input style="width:200px" value="' + ([0, 100, 200, 250, 400].includes(+fw.step) && !/[,;\s]/.test(String(fw.step)) ? '' : escapeHtml(String(fw.step))) + '" placeholder="ex. 150  ou  300, 600" onchange="fw.step=this.value.trim()||0;renderFicheWizard()"> <span class="muted">tous les … m, ou une liste de distances</span></div></div>' +
     '<div class="wstep"><h3><b>4</b>Estimation avant chaque course</h3>' + seg('est', [[true, 'Oui'], [false, 'Non']]) + '</div>' +
     '<div class="flex"><button class="w-blue" onclick="fwCreate(false)">✓ Créer la fiche</button><button class="secondary" onclick="fwCreate(true)">Créer et personnaliser</button></div>' +
