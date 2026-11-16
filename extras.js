@@ -30,7 +30,7 @@ const sgn = v => (v > 0 ? '+' : v < 0 ? '−' : '') + String(Math.abs(Math.round
 #rafale .rbtn{background:#fff;color:#111;border:0;border-radius:14px;padding:14px 18px;font-size:18px;font-weight:800;min-height:56px}
 #rafale .rauto{background:#22c55e;color:#fff}#rafale .rauto.off{background:#555}
 .ctrlbox{margin:14px 0}.ctrl-alert{background:#fee2e2;border:3px solid #ef4444;border-radius:18px;padding:14px 16px;margin:10px 0;color:#7f1d1d}
-.ctrl-alert h3{margin:0 0 6px;font-size:20px;color:#b91c1c}.ctrl-alert li{margin:4px 0;font-size:16px}.ctrl-ok{background:#dcfce7;border:2px solid #22c55e;border-radius:16px;padding:12px 16px;color:#14532d;font-weight:700}
+.ctrl-alert ul{list-style:none;padding:0;margin:0}.ctrl-alert>ul>li{background:#fff;border-radius:14px;padding:10px 14px;margin:10px 0}.citem{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:6px 0}.citem>span{flex:1;min-width:240px;font-size:17px}.cbtns{display:flex;gap:10px}.cbtns button{min-height:60px;font-size:17px;font-weight:800;border-radius:14px;padding:8px 16px;line-height:1.15;color:#fff;box-shadow:0 4px 10px rgba(0,0,0,.12)}.cbtns small{display:block;font-size:20px;font-weight:900;margin-top:2px}.cb-me{background:linear-gradient(135deg,#16a34a,#22c55e)}.cb-pf{background:linear-gradient(135deg,#2563eb,#3b82f6)}.cb-est{background:linear-gradient(135deg,#7c3aed,#a78bfa)}.ctrl-alert h3{margin:0 0 6px;font-size:20px;color:#b91c1c}.ctrl-alert li{margin:4px 0;font-size:16px}.ctrl-ok{background:#dcfce7;border:2px solid #22c55e;border-radius:16px;padding:12px 16px;color:#14532d;font-weight:700}
 .pfbox{background:#f6f3ff;border-radius:18px;padding:14px 16px;margin:12px 0}.pfbox table{width:100%;border-collapse:collapse}.pfbox td,.pfbox th{padding:6px 8px;border-bottom:1px solid #e5e0f5;text-align:left;font-size:14px}
 #annBox{position:fixed;inset:0;z-index:9000;background:rgba(20,15,50,.55);display:flex;align-items:flex-start;justify-content:center;overflow:auto;padding:20px}
 #annBox .card{background:#fff;border-radius:22px;max-width:760px;width:100%;padding:20px;box-shadow:0 20px 50px rgba(0,0,0,.3)}
@@ -182,7 +182,7 @@ function controlAlerts(t, s, r, pft) {
   const out = [], n = (s.notes || {})[t.id] || {}, m = metrics(t, r.values);
   estBlocks(t).forEach(({ b, bi, er }) => {
     const a = n['ann' + bi], f = r.values[er.id];
-    if (a && sec(a) !== sec(f)) out.push({ kind: 'est', key: 'est' + bi + ':' + a + '/' + (f || ''), rowId: er.id, val: a, text: (b.title || 'Course') + ' : estimation annoncée ' + a + (f ? ', mais ' + f + ' sur la fiche' : ', rien sur la fiche') });
+    if (a && sec(a) !== sec(f)) out.push({ kind: 'est', key: 'est' + bi + ':' + a + '/' + (f || ''), rowId: er.id, val: a, cur: f || '', text: (b.title || 'Course') + ' : estimation annoncée ' + a + (f ? ', mais ' + f + ' sur la fiche' : ', rien sur la fiche') });
   });
   pft = pft === undefined ? pfTimes(t) : pft;
   const pf = pft && pft.by[s.id];
@@ -190,8 +190,8 @@ function controlAlerts(t, s, r, pft) {
     const p = pf[k], f = m.blocks[bi].final; if (p === undefined) return;
     const fr = b.rows.filter(x => x.type === 'time' && !isEst(x)).pop(), pv = p === 'dnf' ? null : Math.floor(p / 60) + ':' + String(Math.floor(p % 60)).padStart(2, '0');
     if (p === 'dnf') { out.push({ kind: 'pf', key: 'pf' + bi + ':dnf', text: (b.title || 'Course') + ' : non classé dans PhotoFinish' }); return; }
-    if (f == null) { out.push({ kind: 'pf', key: 'pf' + bi + ':' + pv + '/', rowId: fr && fr.id, val: pv, text: (b.title || 'Course') + ' : PhotoFinish ' + fmtPF(p) + ', pas de temps final sur la fiche' }); return; }
-    const d = f - p; if (Math.abs(d) > pft.tol) out.push({ kind: 'pf', key: 'pf' + bi + ':' + pv + '/' + fmt(f), rowId: fr && fr.id, val: pv, text: (b.title || 'Course') + ' : fiche ' + fmt(f) + ' · PhotoFinish ' + fmtPF(p) + ' (écart ' + sgn(d) + ' s)' });
+    if (f == null) { out.push({ kind: 'pf', key: 'pf' + bi + ':' + pv + '/', rowId: fr && fr.id, val: pv, cur: '', text: (b.title || 'Course') + ' : PhotoFinish ' + fmtPF(p) + ', pas de temps final sur la fiche' }); return; }
+    const d = f - p; if (Math.abs(d) > pft.tol) out.push({ kind: 'pf', key: 'pf' + bi + ':' + pv + '/' + fmt(f), rowId: fr && fr.id, val: pv, cur: fmt(f), text: (b.title || 'Course') + ' : fiche ' + fmt(f) + ' · PhotoFinish ' + fmtPF(p) + ' (écart ' + sgn(d) + ' s)' });
   });
   return out.filter(a => !(r.ack || {})[a.key]);
 }
@@ -206,7 +206,9 @@ async function ctrlAnswer(rid, key, take) {
   if ($('scan') && !$('scan').classList.contains('hidden') && editing === rid) editScan(rid); else renderResults();
 }
 function ctrlButtons(r, a) {
-  return ' <button class="mini" onclick="ctrlAnswer(\'' + r.id + '\',\'' + escapeHtml(a.key) + '\',false)">✓ Garder la fiche</button>' + (a.rowId && a.val ? ' <button class="mini" onclick="ctrlAnswer(\'' + r.id + '\',\'' + escapeHtml(a.key) + '\',true)">↺ Prendre ' + escapeHtml(a.val) + (a.kind === 'pf' ? ' (PhotoFinish)' : ' (annoncée)') + '</button>' : '');
+  const go = take => 'onclick="ctrlAnswer(\'' + r.id + '\',\'' + escapeHtml(a.key) + '\',' + take + ')"';
+  const mine = a.kind === 'pf' ? (a.cur ? '✓ Valider le chrono élève<small>' + escapeHtml(a.cur) + '</small>' : '✓ Valider quand même<small>sans temps PhotoFinish</small>') : '✓ Valider la fiche<small>' + escapeHtml(a.cur || 'vide') + '</small>';
+  return '<div class="cbtns"><button class="cb-me" ' + go(false) + '>' + mine + '</button>' + (a.rowId && a.val ? '<button class="cb-' + a.kind + '" ' + go(true) + '>' + (a.kind === 'pf' ? '⏱ Valider PhotoFinish' : '📝 Valider l’annoncée') + '<small>' + escapeHtml(a.val) + '</small></button>' : '') + '</div>';
 }
 const _scanStateBase = scanState;
 scanState = function (r) {
@@ -234,7 +236,7 @@ function renderControls() {
       (pft.unknown.length ? '<p class="notice">Noms PhotoFinish non reconnus : ' + pft.unknown.map(escapeHtml).join(', ') + '</p>' : '') +
       (missPF.length ? '<p class="muted">Sans temps PhotoFinish : ' + missPF.map(s => escapeHtml(s.name)).join(', ') + '</p>' : '') + '</details>';
   }
-  if (alerts.length) h += '<div class="ctrl-alert"><h3>🚨 ' + alerts.length + ' élève(s) à contrôler</h3><ul>' + alerts.map(x => '<li><b>' + escapeHtml(x.s.name) + '</b> — ' + x.a.map(a => escapeHtml(a.text) + ctrlButtons(x.r, a)).join('<br>') + ' <button class="mini" onclick="editScan(\'' + x.r.id + '\')">Ouvrir la fiche</button></li>').join('') + '</ul></div>';
+  if (alerts.length) h += '<div class="ctrl-alert"><h3>🚨 ' + alerts.length + ' élève(s) à contrôler</h3><ul>' + alerts.map(x => '<li><b>' + escapeHtml(x.s.name) + '</b> — ' + x.a.map(a => '<div class="citem"><span>' + escapeHtml(a.text) + '</span>' + ctrlButtons(x.r, a) + '</div>').join('') + '<button class="linkbtn" onclick="editScan(\'' + x.r.id + '\')">Voir la photo de la fiche</button></li>').join('') + '</ul></div>';
   else if (hasAnn || (P && P.files.length)) h += '<p class="ctrl-ok">✓ Aucune différence avec ' + [hasAnn ? 'les estimations annoncées' : '', P && P.files.length ? 'PhotoFinish (± ' + nf(pft.tol) + ' s)' : ''].filter(Boolean).join(' ni avec ') + '.</p>';
   box.innerHTML = h;
 }
@@ -245,7 +247,7 @@ editScan = function (id) {
   _editScanBase(id); const r = state.scans.find(x => x.id === id); if (!r) return;
   const a = controlAlerts(tplById(r.templateId), state.students.find(x => x.id === r.studentId), r);
   let el = $('scanCtrl'); if (!el) { el = document.createElement('div'); el.id = 'scanCtrl'; $('scanIssues').parentNode.insertBefore(el, $('scanIssues')); }
-  el.innerHTML = a.length ? '<div class="ctrl-alert"><h3>🚨 À contrôler</h3><ul>' + a.map(x => '<li>' + escapeHtml(x.text) + ctrlButtons(r, x) + '</li>').join('') + '</ul></div>' : '';
+  el.innerHTML = a.length ? '<div class="ctrl-alert"><h3>🚨 À contrôler</h3><ul>' + a.map(x => '<li><div class="citem"><span>' + escapeHtml(x.text) + '</span>' + ctrlButtons(r, x) + '</div></li>').join('') + '</ul></div>' : '';
 };
 
 /* ---------- 4. Bilan détaillé par élève (HTML) ---------- */
