@@ -182,18 +182,31 @@ function controlAlerts(t, s, r, pft) {
   const out = [], n = (s.notes || {})[t.id] || {}, m = metrics(t, r.values);
   estBlocks(t).forEach(({ b, bi, er }) => {
     const a = n['ann' + bi], f = r.values[er.id];
-    if (a && f && sec(a) !== sec(f)) out.push({ kind: 'est', text: (b.title || 'Course') + ' : estimation annoncée ' + a + ', mais ' + f + ' sur la fiche' });
-    if (a && !f) out.push({ kind: 'est', text: (b.title || 'Course') + ' : estimation annoncée ' + a + ', rien sur la fiche' });
+    if (a && sec(a) !== sec(f)) out.push({ kind: 'est', key: 'est' + bi + ':' + a + '/' + (f || ''), rowId: er.id, val: a, text: (b.title || 'Course') + ' : estimation annoncée ' + a + (f ? ', mais ' + f + ' sur la fiche' : ', rien sur la fiche') });
   });
   pft = pft === undefined ? pfTimes(t) : pft;
   const pf = pft && pft.by[s.id];
   if (pf) timedBlocks(t).forEach(({ b, bi }, k) => {
     const p = pf[k], f = m.blocks[bi].final; if (p === undefined) return;
-    if (p === 'dnf') { out.push({ kind: 'pf', text: (b.title || 'Course') + ' : non classé dans PhotoFinish' }); return; }
-    if (f == null) { out.push({ kind: 'pf', text: (b.title || 'Course') + ' : PhotoFinish ' + fmtPF(p) + ', pas de temps final sur la fiche' }); return; }
-    const d = f - p; if (Math.abs(d) > pft.tol) out.push({ kind: 'pf', text: (b.title || 'Course') + ' : fiche ' + fmt(f) + ' · PhotoFinish ' + fmtPF(p) + ' (écart ' + sgn(d) + ' s)' });
+    const fr = b.rows.filter(x => x.type === 'time' && !isEst(x)).pop(), pv = p === 'dnf' ? null : Math.floor(p / 60) + ':' + String(Math.floor(p % 60)).padStart(2, '0');
+    if (p === 'dnf') { out.push({ kind: 'pf', key: 'pf' + bi + ':dnf', text: (b.title || 'Course') + ' : non classé dans PhotoFinish' }); return; }
+    if (f == null) { out.push({ kind: 'pf', key: 'pf' + bi + ':' + pv + '/', rowId: fr && fr.id, val: pv, text: (b.title || 'Course') + ' : PhotoFinish ' + fmtPF(p) + ', pas de temps final sur la fiche' }); return; }
+    const d = f - p; if (Math.abs(d) > pft.tol) out.push({ kind: 'pf', key: 'pf' + bi + ':' + pv + '/' + fmt(f), rowId: fr && fr.id, val: pv, text: (b.title || 'Course') + ' : fiche ' + fmt(f) + ' · PhotoFinish ' + fmtPF(p) + ' (écart ' + sgn(d) + ' s)' });
   });
-  return out;
+  return out.filter(a => !(r.ack || {})[a.key]);
+}
+// Réponse rapide à une alerte : garder la fiche telle quelle, ou prendre la valeur annoncée / PhotoFinish
+async function ctrlAnswer(rid, key, take) {
+  const r = state.scans.find(x => x.id === rid); if (!r) return;
+  const t = tplById(r.templateId), s = state.students.find(x => x.id === r.studentId), a = controlAlerts(t, s, r).find(x => x.key === key); if (!a) return;
+  if (take && a.rowId) { r.values = Object.assign({}, r.values, { [a.rowId]: a.val }); r.issues = (r.issues || []).concat('Corrigé : ' + a.text.split(' : ')[0] + ' → ' + a.val + (a.kind === 'pf' ? ' (PhotoFinish)' : ' (annoncée)')); }
+  r.ack = Object.assign({}, r.ack, { [take ? key.split(':')[0] + ':' + a.val + '/' + a.val : key]: true, [key]: true });
+  if (!controlAlerts(t, s, r).length) r.status = 'validated';
+  r.updated = new Date().toISOString(); await persist();
+  if ($('scan') && !$('scan').classList.contains('hidden') && editing === rid) editScan(rid); else renderResults();
+}
+function ctrlButtons(r, a) {
+  return ' <button class="mini" onclick="ctrlAnswer(\'' + r.id + '\',\'' + escapeHtml(a.key) + '\',false)">✓ Garder la fiche</button>' + (a.rowId && a.val ? ' <button class="mini" onclick="ctrlAnswer(\'' + r.id + '\',\'' + escapeHtml(a.key) + '\',true)">↺ Prendre ' + escapeHtml(a.val) + (a.kind === 'pf' ? ' (PhotoFinish)' : ' (annoncée)') + '</button>' : '');
 }
 const _scanStateBase = scanState;
 scanState = function (r) {
@@ -221,7 +234,7 @@ function renderControls() {
       (pft.unknown.length ? '<p class="notice">Noms PhotoFinish non reconnus : ' + pft.unknown.map(escapeHtml).join(', ') + '</p>' : '') +
       (missPF.length ? '<p class="muted">Sans temps PhotoFinish : ' + missPF.map(s => escapeHtml(s.name)).join(', ') + '</p>' : '') + '</details>';
   }
-  if (alerts.length) h += '<div class="ctrl-alert"><h3>🚨 ' + alerts.length + ' élève(s) à contrôler</h3><ul>' + alerts.map(x => '<li><b>' + escapeHtml(x.s.name) + '</b> — ' + x.a.map(a => escapeHtml(a.text)).join(' · ') + ' <button class="mini" onclick="editScan(\'' + x.r.id + '\')">Ouvrir la fiche</button></li>').join('') + '</ul></div>';
+  if (alerts.length) h += '<div class="ctrl-alert"><h3>🚨 ' + alerts.length + ' élève(s) à contrôler</h3><ul>' + alerts.map(x => '<li><b>' + escapeHtml(x.s.name) + '</b> — ' + x.a.map(a => escapeHtml(a.text) + ctrlButtons(x.r, a)).join('<br>') + ' <button class="mini" onclick="editScan(\'' + x.r.id + '\')">Ouvrir la fiche</button></li>').join('') + '</ul></div>';
   else if (hasAnn || (P && P.files.length)) h += '<p class="ctrl-ok">✓ Aucune différence avec ' + [hasAnn ? 'les estimations annoncées' : '', P && P.files.length ? 'PhotoFinish (± ' + nf(pft.tol) + ' s)' : ''].filter(Boolean).join(' ni avec ') + '.</p>';
   box.innerHTML = h;
 }
@@ -232,7 +245,7 @@ editScan = function (id) {
   _editScanBase(id); const r = state.scans.find(x => x.id === id); if (!r) return;
   const a = controlAlerts(tplById(r.templateId), state.students.find(x => x.id === r.studentId), r);
   let el = $('scanCtrl'); if (!el) { el = document.createElement('div'); el.id = 'scanCtrl'; $('scanIssues').parentNode.insertBefore(el, $('scanIssues')); }
-  el.innerHTML = a.length ? '<div class="ctrl-alert"><h3>🚨 À contrôler</h3><ul>' + a.map(x => '<li>' + escapeHtml(x.text) + '</li>').join('') + '</ul></div>' : '';
+  el.innerHTML = a.length ? '<div class="ctrl-alert"><h3>🚨 À contrôler</h3><ul>' + a.map(x => '<li>' + escapeHtml(x.text) + ctrlButtons(r, x) + '</li>').join('') + '</ul></div>' : '';
 };
 
 /* ---------- 4. Bilan détaillé par élève (HTML) ---------- */
