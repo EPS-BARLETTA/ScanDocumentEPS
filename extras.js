@@ -278,3 +278,21 @@ function exportDetail() {
   const doc = '<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' + escapeHtml(t.name) + ' — bilan détaillé</title><style>' + css + '</style></head><body>' + coverHTML(t, cids, 'Bilan détaillé par élève') + body + '</body></html>';
   download('bilan-' + slug(t.name) + '-' + (sel === '*' ? 'toutes-classes' : slug(className(cids[0]))) + '.html', doc, 'text/html;charset=utf-8');
 }
+
+/* ---------- Tableau des résultats : noms et en-têtes figés ---------- */
+(() => { const st = document.createElement('style'); st.textContent = `
+#results .tablewrap{max-height:calc(100vh - 140px);overflow:auto;-webkit-overflow-scrolling:touch}
+#resultsTable,#resultsTable.gt{overflow:visible}
+#resultsTable thead th{position:sticky;z-index:3}
+#resultsTable tbody td:first-child,#resultsTable thead th.stickl{position:sticky;left:0;z-index:2;background:#fff;box-shadow:2px 0 0 #ece8fb}
+#resultsTable thead th.stickl{z-index:4;background:#f6f3ff}
+#resultsTable thead tr:first-child th.stickl{background:#f6f3ff}
+`; document.head.appendChild(st); })();
+function stickyResults() {
+  const tb = $('resultsTable'); if (!tb) return;
+  let top = 0;
+  [...tb.tHead.rows].forEach(tr => { [...tr.cells].forEach(th => { th.style.top = top + 'px'; }); top += tr.getBoundingClientRect().height; });
+  const first = tb.tHead.rows[0] && tb.tHead.rows[0].cells[0]; if (first) first.classList.add('stickl');
+}
+const _renderResultsSticky = renderResults;
+renderResults = function () { _renderResultsSticky(); try { stickyResults(); requestAnimationFrame(stickyResults); } catch (e) { } };
