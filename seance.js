@@ -20,6 +20,28 @@
 .sstep .acts{display:flex;gap:10px;flex-wrap:wrap}.sstep .acts button,.sstep .acts label.btn{min-height:58px;font-size:17px;font-weight:800;border-radius:16px;padding:10px 18px}
 .sstep.next .acts button:first-child,.sstep.next .acts label.btn:first-child{background:linear-gradient(135deg,#0284c7,#38bdf8);color:#fff}
 .sopt{font-size:13px;font-weight:700;color:#7c7aa0;margin-left:6px}
+#seance .shead select{min-height:48px}
+.stepper{display:flex;align-items:center;gap:0;margin:14px 0 18px;overflow-x:auto;padding:4px 2px}
+.stepper i{flex:1;min-width:14px;height:3px;background:#e2ddf5;border-radius:3px}
+.stepper button{flex:none;display:flex;flex-direction:column;align-items:center;gap:4px;background:none;box-shadow:none;padding:2px 4px;min-height:0;color:#6b6890}
+.stepper button span{width:46px;height:46px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:20px;background:#f1eefc;border:3px solid #e2ddf5}
+.stepper button small{font-size:12px;font-weight:800}
+.stepper button.ok span{background:#22c55e;border-color:#22c55e;color:#fff;font-weight:900}.stepper button.ok small{color:#15803d}
+.stepper button.cur span{background:#0ea5e9;border-color:#bae6fd;color:#fff;transform:scale(1.15)}.stepper button.cur small{color:#0369a1}
+.focus{background:#fff;border-radius:28px;padding:30px 32px;box-shadow:0 18px 44px rgba(14,165,233,.16);border:3px solid #bae6fd;text-align:center}
+.focus.isdone{border-color:#bbf7d0}.fnum{font-weight:900;color:#0369a1;letter-spacing:.02em;text-transform:uppercase;font-size:14px}
+.focus h2{font-size:32px;margin:8px 0 6px}.focus>p{font-size:18px;color:#4b4870;max-width:720px;margin:0 auto 14px;line-height:1.45}
+.fstat{display:inline-block;font-size:20px;font-weight:900;padding:8px 18px;border-radius:999px;background:#f1eefc;color:#4b3fa8;margin-bottom:16px}.fstat.ok{background:#dcfce7;color:#166534}.fstat.warn{background:#fee2e2;color:#991b1b}
+.fmain .big,.fmain label.big{display:inline-flex;align-items:center;justify-content:center;min-height:84px;min-width:min(520px,100%);font-size:24px;font-weight:900;border-radius:22px;padding:14px 30px;background:linear-gradient(135deg,#0284c7,#38bdf8);color:#fff;box-shadow:0 12px 28px rgba(2,132,199,.3);cursor:pointer}
+.focus.isdone .fmain .big,.focus.isdone .fmain label.big{background:#f1eefc;color:#4b3fa8;box-shadow:none;min-height:64px;font-size:19px}
+.fmore{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:14px}.fmore button,.fmore select{min-height:52px;font-size:16px}
+.fnav{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-top:26px;border-top:2px solid #f1eefc;padding-top:18px}
+.fnav button{min-height:56px;font-size:17px;font-weight:800}.fnav .gonext{background:linear-gradient(135deg,#16a34a,#22c55e);color:#fff;font-size:19px;min-height:64px;padding:12px 24px}
+.fnav .linkbtn{font-size:16px}
+#home .home>.tile{display:none}#home .home{display:block}
+.srecent{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px;margin:4px 0 22px}
+.srecent button{display:block;text-align:left;min-height:80px;background:#fff;color:#1e1b3a;border:2px solid #e5e0f5;border-radius:18px;padding:12px 16px;box-shadow:none;font-weight:900;font-size:17px}
+.srecent button small{display:block;font-weight:600;color:#6b6890;font-size:14px;margin-top:3px}
 #seanceChip{display:none;min-height:44px;border-radius:14px;padding:6px 14px;font-weight:900;background:linear-gradient(135deg,#0f766e,#0ea5e9);color:#fff;margin-right:8px;font-size:15px}
 `; document.head.appendChild(st); })();
 
@@ -53,33 +75,57 @@ function seanceStatus(se) {
   return { t, cid, n: active.length, scanned, queue, pfFiles: P ? P.files.length : 0, alerts, check, valid, printed: (t.printedFor || []).some(p => p.classId === cid), hasEst: !!eb.length, annN, hasBar: !!(t.bareme && bar(t.bareme)), hasTime: timedBlocks(t).length > 0 };
 }
 
+function seanceSteps(se, S) {
+  const t = S.t, cid = S.cid, q = x => '\'' + x + '\'', sk = se.skip || {};
+  const steps = [];
+  steps.push({ key: 'print', ico: '🖨', short: 'Imprimer', done: S.printed, title: 'Imprimer les fiches', text: 'Une fiche par élève, avec son nom et son QR code. Imprime en taille réelle (100 %), puis coupe les feuilles en deux.', stat: S.printed ? '✓ Fiches imprimées' : S.n + ' fiches à imprimer',
+    main: '<button class="big" onclick="seancePrint(\'print\')">🖨 Imprimer les fiches</button>', more: '<button class="secondary" onclick="seancePrint(\'zip\')">📁 Télécharger pour imprimer plus tard</button>' });
+  if (S.hasTime) steps.push({ key: 'pfl', ico: '⏱', short: 'PhotoFinish', opt: true, done: !!se.pfList || sk.pfl, title: 'Tu filmes les arrivées avec PhotoFinish ?', text: 'Envoie la liste de la classe à PhotoFinish (AirDrop ou « Enregistrer dans Fichiers », puis « Importer CSV » dans PhotoFinish). Les noms seront identiques : les temps seront comparés tout seuls.', stat: se.pfList ? '✓ Liste envoyée' : sk.pfl ? 'Pas de PhotoFinish' : '',
+    main: '<button class="big" onclick="seanceFlag(\'pfList\');pfExportClass(' + q(cid) + ')">⏱ Envoyer la liste à PhotoFinish</button>', skip: 'Je n’utilise pas PhotoFinish' });
+  if (S.hasEst) steps.push({ key: 'ann', ico: '📝', short: 'Estimations', opt: true, done: (S.annN === S.n && S.n > 0) || sk.ann, title: 'Avant chaque course : les estimations', text: 'Note le temps que chaque élève annonce. Si la fiche dit autre chose après la course, une alerte rouge te préviendra.', stat: S.annN + ' / ' + S.n + ' estimations notées',
+    main: '<button class="big" onclick="annOpen(' + q(t.id) + ',' + q(cid) + ')">📝 Saisir les estimations</button>', skip: 'Pas d’estimation annoncée' });
+  steps.push({ key: 'scan', ico: '📸', short: 'Scanner', done: S.scanned >= S.n && S.n > 0 && !S.queue, title: 'Scanner les fiches remplies', text: 'Pose les fiches une à une sous l’iPad : la photo se prend toute seule. Approche l’iPad pour que la fiche remplisse presque tout l’écran.', stat: S.scanned + ' / ' + S.n + ' scannées' + (S.queue ? ' · ⚠ ' + S.queue + ' à vérifier' : ''), warn: !!S.queue,
+    main: '<button class="big" onclick="window.__seanceTpl=' + q(t.id) + ';rafaleOpen(' + q(cid) + ',\'seance\')">📸 Scanner les fiches</button>',
+    more: (S.queue ? '<button class="secondary" onclick="window.__seanceTpl=' + q(t.id) + ';$(\'batchClass\').value=' + q(cid) + ';view(\'batch\')">⚠ Voir les ' + S.queue + ' fiches à vérifier</button>' : '') + '<button class="secondary" onclick="window.__seanceTpl=' + q(t.id) + ';$(\'batchClass\').value=' + q(cid) + ';view(\'batch\')">🖼 Depuis mes photos</button>' });
+  const B = t.bareme && bar(t.bareme), bars = [['ca1-2x800', 'Bac · demi-fond 2 × 800 m']].concat((state.baremes || []).map(b => [b.id, b.name || 'Barème sans nom']));
+  steps.push({ key: 'bar', ico: '🎯', short: 'Barème', opt: true, done: !!B || sk.bar, title: B ? 'Barème de la note' : 'Ajouter un barème pour avoir les notes ?', text: B ? 'Les notes sont calculées avec ce barème : ' + (B.name || '') + '.' : 'Sans barème, tu as les temps de chaque élève. Avec un barème, l’appli calcule aussi les notes (tu peux le faire maintenant ou plus tard).', stat: B ? '✓ Barème associé' : sk.bar ? 'Pas de note' : '',
+    main: B ? '<button class="big" onclick="seanceBareme(true)">🎯 Voir ou modifier le barème</button>' : '<button class="big" onclick="seanceBareme()">🎯 Créer le barème</button>',
+    more: B ? '' : '<select onchange="if(this.value)seanceLinkBar(this.value)"><option value="">… ou utiliser un barème existant</option>' + bars.map(([id, n]) => '<option value="' + id + '">' + escapeHtml(n) + '</option>').join('') + '</select>', skip: B ? '' : 'Pas de note cette fois' });
+  if (S.hasTime) steps.push({ key: 'pf', ico: '🏁', short: 'Comparer', opt: true, done: S.pfFiles > 0 || sk.pf, title: 'Comparer avec PhotoFinish', text: 'Dans PhotoFinish : « Fiche résultats » → « Enregistrer dans Fichiers » pour chaque course. Ici, choisis tous les fichiers du jour d’un coup.', stat: S.pfFiles ? '✓ ' + S.pfFiles + ' course(s) importée(s)' : '',
+    main: '<label class="btn big">⏱ Importer les résultats PhotoFinish<input type="file" accept=".html,.htm,text/html" multiple style="display:none" data-tid="' + t.id + '" onchange="pfImport(event)"></label>', skip: 'Pas de PhotoFinish' });
+  steps.push({ key: 'ctrl', ico: '✅', short: B ? 'Noter' : 'Vérifier', done: S.scanned > 0 && !S.alerts && !S.check && !S.queue, title: B ? 'Contrôler et noter' : 'Contrôler les résultats', text: B ? 'Règle les alertes rouges (un toucher chacune), puis note par AFL avec les onglets AFL1, AFL2, AFL3.' : 'Règle les alertes rouges (un toucher chacune) et vérifie les temps.', stat: S.alerts ? '🚨 ' + S.alerts + ' alerte(s)' : S.check ? '⚠ ' + S.check + ' fiche(s) à vérifier' : S.scanned ? '✓ ' + S.valid + ' validée(s)' : '', warn: !!(S.alerts || S.check),
+    main: '<button class="big" onclick="goResults(' + q(t.id) + ',' + q(cid) + ')">📊 Ouvrir les résultats</button>' });
+  steps.push({ key: 'exp', ico: '📤', short: 'Exporter', done: !!se.exported, title: 'Exporter', text: 'Garde une trace de la séance.', stat: se.exported ? '✓ Exporté' : '',
+    main: '<button class="big" onclick="seanceFlag(\'exported\');exportDetail(' + q(t.id) + ',' + q(cid) + ')">📑 Bilan par élève</button>', more: '<button class="secondary" onclick="seanceFlag(\'exported\');exportHTML(' + q(t.id) + ',' + q(cid) + ')">📄 Archive complète</button>' + (B ? '<button class="secondary" onclick="seanceFlag(\'exported\');exportSantorin(' + q(t.id) + ',' + q(cid) + ')">🎓 Santorin</button>' : '') });
+  return steps;
+}
+function seanceCurIndex(se, steps) { const i = steps.findIndex(x => x.key === se.at); if (i >= 0) return i; const k = steps.findIndex(x => !x.done); return k < 0 ? steps.length - 1 : k; }
+async function seanceGo(key) { const se = curSeance(); if (!se) return; se.at = key; await persist(); renderSeance(); window.scrollTo({ top: 0, behavior: 'smooth' }); }
+async function seanceSkip(key) { const se = curSeance(); if (!se) return; se.skip = Object.assign({}, se.skip, { [key]: true }); const st = seanceSteps(se, seanceStatus(se)), i = st.findIndex(x => x.key === key); se.at = (st[i + 1] || st[i]).key; await persist(); renderSeance(); }
+async function seanceLinkBar(id) { const se = curSeance(); if (!se) return; const t = tplById(se.tplId); state.templates.forEach(x => { if (x.bareme === id && x.id !== t.id && id !== 'ca1-2x800') x.bareme = undefined; }); t.bareme = id; await persist(); renderSeance(); }
+async function seanceBareme(edit) {
+  const se = curSeance(); if (!se) return; const t = tplById(se.tplId);
+  window.__seanceReturn = true; view('models');
+  if (edit && state.baremes && state.baremes.some(b => b.id === t.bareme)) { barEdit = t.bareme; barStepFor = null; render(); }
+  else { await newBareme(); await barLinkTpl(t.id); barStepFor = barEdit; barStep = 1; }
+  renderBarWizard(); const e = $('barEditor'); if (e) e.scrollIntoView({ behavior: 'smooth' });
+}
 function renderSeance() {
   const sec = $('seance'); if (!sec || sec.classList.contains('hidden')) return;
   const se = curSeance();
   if (seanceNew || !se) { sec.innerHTML = seanceSetupHTML(); return; }
-  const S = seanceStatus(se), t = S.t, cid = S.cid, q = x => '\'' + x + '\'';
-  const steps = [];
-  steps.push({ key: 'print', must: true, done: S.printed, title: 'Imprimer les fiches', text: 'Une fiche par élève, avec son nom et son QR code. Taille réelle (100 %).', stat: S.printed ? 'imprimées' : S.n + ' fiches',
-    acts: '<button onclick="seancePrint(\'print\')">🖨 Imprimer</button><button class="secondary" onclick="seancePrint(\'zip\')">📁 Télécharger</button>' });
-  if (S.hasTime) steps.push({ key: 'pfl', opt: true, done: !!se.pfList, title: 'Envoyer la liste à PhotoFinish', text: 'Seulement si tu filmes les arrivées. Les noms seront les mêmes dans les deux applis.', stat: se.pfList ? 'envoyée' : 'facultatif',
-    acts: '<button class="secondary" onclick="seanceFlag(\'pfList\');pfExportClass(' + q(cid) + ')">⏱ Envoyer la liste</button>' });
-  if (S.hasEst) steps.push({ key: 'ann', opt: true, done: S.annN === S.n && S.n > 0, title: 'Avant chaque course : estimations annoncées', text: 'Note le temps que chaque élève annonce. Si la fiche dit autre chose, alerte rouge.', stat: S.annN + ' / ' + S.n,
-    acts: '<button class="secondary" onclick="annOpen(' + q(t.id) + ',' + q(cid) + ')">📝 Saisir les estimations</button>' });
-  steps.push({ key: 'scan', must: true, done: S.scanned >= S.n && S.n > 0 && !S.queue, title: 'Scanner les fiches remplies', text: 'Pose les fiches une à une sous l’iPad : la photo se prend toute seule.', stat: S.scanned + ' / ' + S.n + (S.queue ? ' · ⚠ ' + S.queue + ' à vérifier' : ''), warn: !!S.queue,
-    acts: '<button onclick="window.__seanceTpl=' + q(t.id) + ';rafaleOpen(' + q(cid) + ',\'seance\')">📸 Scanner</button>' + (S.queue ? '<button class="secondary" onclick="window.__seanceTpl=' + q(t.id) + ';$(\'batchClass\').value=' + q(cid) + ';view(\'batch\')">Voir les ' + S.queue + ' fiches à vérifier</button>' : '') + '<button class="secondary" onclick="window.__seanceTpl=' + q(t.id) + ';$(\'batchClass\').value=' + q(cid) + ';view(\'batch\')">Depuis mes photos</button>' });
-  if (S.hasTime) steps.push({ key: 'pf', opt: true, done: S.pfFiles > 0, title: 'Comparer avec PhotoFinish', text: 'Choisis tous les fichiers de résultats PhotoFinish du jour, d’un coup.', stat: S.pfFiles ? S.pfFiles + ' course(s)' : 'facultatif',
-    acts: '<label class="btn secondary">⏱ Importer PhotoFinish<input type="file" accept=".html,.htm,text/html" multiple style="display:none" data-tid="' + t.id + '" onchange="pfImport(event)"></label>' });
-  steps.push({ key: 'ctrl', must: true, done: S.scanned > 0 && !S.alerts && !S.check && !S.queue, title: S.hasBar ? 'Contrôler et noter' : 'Contrôler les résultats', text: S.hasBar ? 'Règle les alertes rouges, puis note par AFL (onglets AFL1, AFL2, AFL3).' : 'Règle les alertes rouges. Pas de barème sur cette fiche : tu as les temps (barème à ajouter quand tu veux).', stat: S.alerts ? '🚨 ' + S.alerts + ' alerte(s)' : S.check ? S.check + ' à vérifier' : S.valid + ' validée(s)', warn: !!(S.alerts || S.check),
-    acts: '<button onclick="goResults(' + q(t.id) + ',' + q(cid) + ')">📊 Ouvrir les résultats</button>' });
-  steps.push({ key: 'exp', must: true, done: !!se.exported, title: 'Exporter', text: 'Garde une trace : archive complète, bilan par élève' + (S.hasBar ? ', export Santorin' : '') + '.', stat: se.exported ? 'fait' : '',
-    acts: '<button onclick="seanceFlag(\'exported\');exportHTML(' + q(t.id) + ',' + q(cid) + ')">📄 Archive</button><button class="secondary" onclick="seanceFlag(\'exported\');exportDetail(' + q(t.id) + ',' + q(cid) + ')">📑 Bilan par élève</button>' + (S.hasBar ? '<button class="secondary" onclick="seanceFlag(\'exported\');exportSantorin(' + q(t.id) + ',' + q(cid) + ')">🎓 Santorin</button>' : '') });
-  const next = steps.find(x => x.must && !x.done);
-  const others = (state.seances || []).filter(x => x.id !== se.id && state.classes.some(c => c.id === x.classId) && tplById(x.tplId)).slice(-6).reverse();
-  sec.innerHTML = '<button class="back" onclick="view(\'home\')">← Accueil</button>' +
-    '<div class="shead"><div class="grow"><h2>' + escapeHtml(className(cid)) + ' · ' + escapeHtml(t.name) + '</h2><p class="muted" style="margin:4px 0 0">Suis les étapes dans l’ordre. Tout est enregistré : tu peux t’arrêter et reprendre plus tard.</p></div>' +
-    '<button class="secondary" onclick="seanceOpen(true)">＋ Autre séance</button>' + (others.length ? '<select onchange="if(this.value)seanceSwitch(this.value)"><option value="">Reprendre…</option>' + others.map(x => '<option value="' + x.id + '">' + escapeHtml(className(x.classId) + ' · ' + tplById(x.tplId).name) + '</option>').join('') + '</select>' : '') + '</div>' +
-    steps.map((x, i) => '<div class="sstep' + (x.done ? ' done' : '') + (x === next ? ' next' : '') + (x.opt ? ' opt' : '') + '"><div class="num">' + (x.done ? '✓' : i + 1) + '</div><div class="txt"><h3>' + escapeHtml(x.title) + (x.opt ? '<span class="sopt">facultatif</span>' : '') + '</h3><p>' + escapeHtml(x.text) + '</p></div>' + (x.stat ? '<span class="stat' + (x.warn ? ' warn' : '') + '">' + escapeHtml(x.stat) + '</span>' : '') + '<div class="acts">' + x.acts + '</div></div>').join('') +
-    (next ? '' : '<p class="ctrl-ok" style="font-size:18px">🎉 Séance terminée : tout est scanné, contrôlé et exporté.</p>');
+  const S = seanceStatus(se), t = S.t, steps = seanceSteps(se, S), ci = seanceCurIndex(se, steps), c = steps[ci], allDone = steps.every(x => x.done);
+  const others = (state.seances || []).filter(x => x.id !== se.id && state.classes.some(cc => cc.id === x.classId) && tplById(x.tplId)).slice(-6).reverse();
+  sec.innerHTML = '<div class="shead"><button class="back" style="margin:0" onclick="view(\'home\')">← Accueil</button><div class="grow"><h2>' + escapeHtml(className(S.cid)) + ' · ' + escapeHtml(t.name) + '</h2></div>' +
+    (others.length ? '<select onchange="if(this.value)seanceSwitch(this.value)"><option value="">Autre séance…</option>' + others.map(x => '<option value="' + x.id + '">' + escapeHtml(className(x.classId) + ' · ' + tplById(x.tplId).name) + '</option>').join('') + '</select>' : '') + '<button class="secondary" onclick="seanceOpen(true)">＋ Nouvelle</button></div>' +
+    '<div class="stepper">' + steps.map((x, i) => '<button class="' + (i === ci ? 'cur' : x.done ? 'ok' : '') + '" onclick="seanceGo(\'' + x.key + '\')"><span>' + (x.done && i !== ci ? '✓' : x.ico) + '</span><small>' + escapeHtml(x.short) + '</small></button>').join('<i></i>') + '</div>' +
+    '<div class="focus' + (c.done ? ' isdone' : '') + '"><div class="fnum">Étape ' + (ci + 1) + ' sur ' + steps.length + (c.opt ? ' · facultative' : '') + '</div><h2>' + escapeHtml(c.title) + '</h2><p>' + escapeHtml(c.text) + '</p>' +
+    (c.stat ? '<div class="fstat' + (c.warn ? ' warn' : c.done ? ' ok' : '') + '">' + escapeHtml(c.stat) + '</div>' : '') +
+    '<div class="fmain">' + c.main + '</div>' + (c.more ? '<div class="fmore">' + c.more + '</div>' : '') +
+    '<div class="fnav">' + (ci > 0 ? '<button class="secondary" onclick="seanceGo(\'' + steps[ci - 1].key + '\')">← ' + escapeHtml(steps[ci - 1].short) + '</button>' : '<span></span>') +
+    (c.skip && !c.done ? '<button class="linkbtn" onclick="seanceSkip(\'' + c.key + '\')">' + escapeHtml(c.skip) + ' →</button>' : '') +
+    (ci < steps.length - 1 ? '<button class="' + (c.done ? 'gonext' : 'secondary') + '" onclick="seanceGo(\'' + steps[ci + 1].key + '\')">Étape suivante : ' + escapeHtml(steps[ci + 1].short) + ' →</button>' : '<span></span>') + '</div></div>' +
+    (allDone ? '<p class="ctrl-ok" style="font-size:18px;text-align:center">🎉 Séance terminée : tout est scanné, contrôlé et exporté.</p>' : '');
 }
 function seanceSetupHTML() {
   const n = seanceNew || (seanceNew = { classId: null, tplId: null }), q = x => '\'' + x + '\'';
@@ -103,9 +149,12 @@ async function seancePrint(mode) {
 function renderSeanceHome() {
   const home = $('home'); if (!home) return;
   let b = $('seanceBanner'); if (!b) { b = document.createElement('div'); b.id = 'seanceBanner'; const hello = home.querySelector('.hello'); hello.parentNode.insertBefore(b, hello.nextSibling); }
-  const se = curSeance();
-  if (se) { const S = seanceStatus(se); b.innerHTML = '<div class="sbanner"><div class="grow"><h3>▶ Reprendre ma séance</h3><p><b>' + escapeHtml(className(se.classId)) + ' · ' + escapeHtml(S.t.name) + '</b> — ' + (S.printed ? S.scanned + ' / ' + S.n + ' fiches scannées' + (S.alerts ? ' · 🚨 ' + S.alerts + ' alerte(s)' : '') : 'fiches pas encore imprimées') + '</p></div><button onclick="seanceOpen()">Reprendre →</button><button class="ghost" onclick="seanceOpen(true)">＋ Nouvelle séance</button></div>'; }
-  else b.innerHTML = '<div class="sbanner"><div class="grow"><h3>Démarrer une séance</h3><p>Choisis ta classe et ta fiche : l’appli te guide ensuite étape par étape, de l’impression aux notes.</p></div><button onclick="seanceOpen(true)">▶ Démarrer</button></div>';
+  const se = curSeance(), rec = (state.seances || []).filter(x => (!se || x.id !== se.id) && state.classes.some(c => c.id === x.classId) && tplById(x.tplId)).slice(-4).reverse();
+  let h = '';
+  if (se) { const S = seanceStatus(se), st = seanceSteps(se, S), ci = seanceCurIndex(se, st); h += '<div class="sbanner"><div class="grow"><h3>▶ Reprendre : ' + escapeHtml(className(se.classId)) + ' · ' + escapeHtml(S.t.name) + '</h3><p>Étape ' + (ci + 1) + ' sur ' + st.length + ' : <b>' + escapeHtml(st[ci].title) + '</b></p></div><button onclick="seanceOpen()">Reprendre →</button><button class="ghost" onclick="seanceOpen(true)">＋ Nouvelle séance</button></div>'; }
+  else h += '<div class="sbanner"><div class="grow"><h3>Nouvelle séance</h3><p>Choisis ta classe et ta fiche : l’appli te guide ensuite, étape par étape, de l’impression aux notes.</p></div><button onclick="seanceOpen(true)">▶ Commencer</button></div>';
+  if (rec.length) h += '<h3 style="margin:6px 0 8px">Mes autres séances</h3><div class="srecent">' + rec.map(x => { const S = seanceStatus(x); return '<button onclick="seanceSwitch(\'' + x.id + '\')">' + escapeHtml(className(x.classId)) + ' · ' + escapeHtml(S.t.name) + '<small>' + (S.printed ? S.scanned + ' / ' + S.n + ' fiches scannées' : 'à imprimer') + '</small></button>'; }).join('') + '</div>';
+  b.innerHTML = h;
   let chip = $('seanceChip');
   if (!chip) { chip = document.createElement('button'); chip.id = 'seanceChip'; chip.onclick = () => seanceOpen(); const sp = document.querySelector('header.top .sp'); sp.parentNode.insertBefore(chip, sp.nextSibling); }
   const vis = document.querySelector('main section:not(.hidden)'), on = vis && !['seance', 'cover', 'home'].includes(vis.id);

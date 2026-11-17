@@ -278,7 +278,7 @@ function renderBarWizard() {
   if (barAll) h += S.join('');
   else h += '<div class="wdots">' + S.map((_, k) => '<span class="' + (k === barStep ? 'on' : k < barStep ? 'done' : '') + '" onclick="barGo(' + k + ')"></span>').join('') + '</div>' + S[barStep] +
     '<div class="flex wnav">' + (barStep > 0 ? '<button class="secondary" onclick="barGo(' + (barStep - 1) + ')">← Retour</button>' : '') + '<span class="grow"></span>' +
-    (barStep < N - 1 ? '<button class="w-orange" onclick="barGo(' + (barStep + 1) + ')">Suivant →</button>' : '<button class="w-orange" onclick="barEdit=null;render()">✓ Terminé</button>') + '</div>';
+    (barStep < N - 1 ? '<button class="w-orange" onclick="barGo(' + (barStep + 1) + ')">Suivant →</button>' : '<button class="w-orange" onclick="barEdit=null;if(window.__seanceReturn){window.__seanceReturn=false;view(\'seance\')}else render()">' + (window.__seanceReturn ? '✓ Terminé — retour à ma séance' : '✓ Terminé') + '</button>') + '</div>';
   h += '<p id="barTotal" class="notice">' + barTotalHTML(b) + '</p><p style="text-align:center"><a href="#" onclick="barAll=!barAll;renderBarWizard();return false">' + (barAll ? 'Revenir à l’assistant pas à pas' : 'Tout afficher sur une page') + '</a></p>';
   box.innerHTML = h;
 }
