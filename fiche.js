@@ -48,7 +48,7 @@
       let headers = 0, rows = 0;
       for (const b of blocks) b.rows.forEach((row, i) => { rows++; if (row.type !== 'choice' && (i === 0 || b.rows[i - 1].type !== row.type)) headers++; });
       const fixed = blocks.length * 9 + headers * 4.6, avail = F.bottom - TOP;
-      const rh = Math.min(fmt === 'A4' ? 10 : 8.2, (avail - fixed) / rows);
+      const rh = Math.min(tpl.roomy ? (fmt === 'A4' ? 15 : 13) : fmt === 'A4' ? 10 : 8.2, (avail - fixed - (tpl.lapHelper ? 46 : 0)) / rows);
       if (rh < 6.4) return { ok: false, error: 'Trop de lignes pour une fiche ' + fmt };
       const out = { ok: true, fmt, F, sp, r, rh, blocks: [], rows: [] };
       let y = TOP + 3;
@@ -65,6 +65,7 @@
         });
         y += 5;
       });
+      out.endY = y;
       return out;
     };
     const want = forceFmt || tpl.format;
@@ -145,8 +146,30 @@
       });
       o.push('<rect x="' + (F.corr.x - F.corr.s / 2) + '" y="' + n2(y - F.corr.s / 2) + '" width="' + F.corr.s + '" height="' + F.corr.s + '" fill="none" stroke="#666" stroke-width="0.25"/>');
     }
+    if (tpl.lapHelper && lay.endY) o.push(lapHelperSVG(tpl.lapHelper, F, lay.endY + 2, tpl, lay));
     o.push(text(F.W / 2, F.H - 10.2, 2.2, 'Imprimer en taille réelle · ne pas plier · photographier toute la fiche, les 4 carrés visibles', ' text-anchor="middle" fill="#777"'));
     o.push('</svg>');
+    return o.join('');
+  }
+
+  /* Aide au comptage des tours + exemple de remplissage : décor seulement, jamais lu par l'appli */
+  function lapHelperSVG(h, F, y0, tpl, lay) {
+    const o = [], n = h.n || 10, mark = h.mark || 0, x0 = 19, x1 = F.W - 17, g = '#8a94a6';
+    o.push('<rect x="12" y="' + n2(y0) + '" width="' + (F.W - 24) + '" height="40" rx="3" fill="none" stroke="#c9d2de" stroke-width="0.3" stroke-dasharray="1.2 1"/>');
+    o.push(text(15, y0 + 5.2, 2.6, 'Pour compter les tours : barre un rond à chaque tour (aide, non lue par l’appli)', ' fill="' + g + '" font-style="italic"'));
+    const step = (x1 - x0 - 10) / (n - 1), cy = y0 + 13.5;
+    for (let i = 0; i < n; i++) {
+      const cx = x0 + 3.5 + i * step + (mark && i >= mark ? 6 : 0) - (mark ? 3 : 0);
+      o.push('<circle cx="' + n2(cx) + '" cy="' + n2(cy) + '" r="3.3" fill="none" stroke="' + g + '" stroke-width="0.35"/>');
+      o.push(text(cx, cy + 1.2, 3.2, String(i + 1), ' text-anchor="middle" fill="' + g + '"'));
+      if (mark && i === mark - 1) { const sx = cx + 3.3 + (step - 6.6 + 6) / 2; o.push('<line x1="' + n2(sx) + '" y1="' + n2(cy - 5) + '" x2="' + n2(sx) + '" y2="' + n2(cy + 5) + '" stroke="' + g + '" stroke-width="0.4"/>'); o.push(text(sx, cy + 8.6, 2.4, (h.markLabel || 'passage') + ' : note le temps', ' text-anchor="middle" fill="' + g + '"')); }
+      if (i === n - 1) o.push(text(cx, cy + 8.6, 2.4, h.endLabel || 'arrivée', ' text-anchor="middle" fill="' + g + '"'));
+    }
+    // exemple de remplissage
+    // exemple aligné sur les vraies colonnes
+    const ey = y0 + 33, R0 = lay.rows.find(x => x.row.type === 'time');
+    o.push(text(15, ey + 0.9, 2.6, 'Exemple : 4:52 →', ' fill="' + g + '" font-weight="700"'));
+    if (R0) [4, 5, 2].forEach((on, gi) => { const G = R0.groups[gi]; if (!G) return; for (let k = 0; k < G.n; k++) { const cx = n2(G.x + k * lay.sp); o.push('<circle cx="' + cx + '" cy="' + n2(ey) + '" r="' + n2(lay.r * 0.9) + '" fill="' + (k === on ? '#9aa3b2' : 'none') + '" stroke="#9aa3b2" stroke-width="0.2"/>'); if (k !== on) o.push(text(cx, ey + 0.6, 1.7, String(k), ' text-anchor="middle" fill="#9aa3b2"')); } });
     return o.join('');
   }
 

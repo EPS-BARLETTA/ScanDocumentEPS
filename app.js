@@ -19,9 +19,13 @@ const LIBRARY = [
     blocks: [{ title: '1000 m · piste de 100 m', rows: [
       { id: 'm1t', label: 'Tours faits', type: 'choice', options: ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10'] },
       { id: 'm1a', label: '500 m', type: 'time' },
-      { id: 'm1b', label: '1000 m', type: 'time' }] }] }
+      { id: 'm1b', label: '1000 m', type: 'time' }] }] },
+  { id: 'tm1000s', name: 'Mission 1000 · 1000 m (S5 · S6)', format: 'A5', minutesMax: 9, cumulative: true, roomy: true, lapHelper: { n: 10, mark: 5, markLabel: '500 m', endLabel: '1000 m' },
+    blocks: [{ title: '1000 m · le chrono ne s’arrête pas à 500 m', rows: [
+      { id: 'm2a', label: '500 m', type: 'time' },
+      { id: 'm2b', label: '1000 m', type: 'time' }] }] }
 ];
-const LIB_DESC = { t2x800: '2 courses · estimation + passages 200, 400, 600 et 800 m (cumulés) · A5', t3x500: '3 courses · estimation + passages 250 et 500 m (cumulés) · A5', tm1000: 'Piste de 100 m · tours complets (0 à 10) + temps à 500 m et 1000 m · A5' };
+const LIB_DESC = { t2x800: '2 courses · estimation + passages 200, 400, 600 et 800 m (cumulés) · A5', t3x500: '3 courses · estimation + passages 250 et 500 m (cumulés) · A5', tm1000: 'Piste de 100 m · tours complets (0 à 10) + temps à 500 m et 1000 m · A5', tm1000s: 'Pour les 6e : passage 500 m + arrivée 1000 m, grandes lignes, aide pour compter les tours et exemple · A5' };
 /* ---------- Barèmes ---------- */
 const mmss = x => { const [m, s] = x.split(':').map(Number); return m * 60 + s; };
 const BAREMES = {
