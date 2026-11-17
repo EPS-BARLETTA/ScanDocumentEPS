@@ -184,6 +184,7 @@ function pfTimes(t) { // { sid: [temps course 1, temps course 2…] , unknown: [
   const P = (state.pf || {})[t.id]; if (!P || !P.files.length) return null;
   const studs = resultStudents('*', t).length ? resultStudents('*', t) : state.students, out = {}, unknown = new Set();
   P.files.forEach(f => f.rows.forEach(r => {
+    if (/^non nomm/i.test(r.name)) return; // coureur sans nom dans PhotoFinish
     const s = pfStudent(r.name, studs); if (!s) { unknown.add(r.name); return; }
     const a = out[s.id] = out[s.id] || [];
     let k = +f.course - 1; if (f.course === 'auto') { k = 0; while (a[k] !== undefined) k++; }

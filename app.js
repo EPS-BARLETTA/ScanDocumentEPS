@@ -83,7 +83,7 @@ const nf = v => v == null ? '—' : String(Math.round(v * 100) / 100).replace('.
 // Choix de répartition AFL2-AFL3 déjà donné par l'élève (autre évaluation, préparation…) : repris par défaut
 // Intitulé de la régularité selon les distances de la fiche (200 m pour le 2 × 800, 500 m pour la Mission 1000…)
 function segLens(t) { const out = []; t.blocks.forEach(b => { let prev = 0; b.rows.filter(r => r.type === 'time' && !isEst(r)).forEach(r => { const d = +((r.label.match(/(\d+)\s*m\b/) || [])[1] || 0); if (d > prev) { out.push(d - prev); prev = d; } }); }); return out; }
-function segHead(t) { const L = segLens(t), u = [...new Set(L)]; if (u.length === 1) return (L.length === 2 ? 'Écart entre les deux ' + u[0] + ' m' : 'Écart entre les ' + u[0] + ' m') + ' (régularité)'; return 'Écart entre les fractions (régularité)'; }
+function segHead(t) { const L = segLens(t), u = [...new Set(L)]; if (u.length === 1) return L.length === 2 ? 'Régularité : écart entre les deux ' + u[0] + ' m' : 'Régularité : écart entre le ' + u[0] + ' m le plus rapide et le plus lent'; return 'Régularité : écart entre la fraction la plus rapide et la plus lente'; }
 function defChoix(s) { if (s.choix) return s.choix; let best = null; for (const k in (s.notes || {})) { const c = s.notes[k] && s.notes[k].choix; if (c) best = c; } return best; }
 async function setNote(sid, tid, k, v) {
   const s = state.students.find(x => x.id === sid); if (!s) return;
@@ -770,8 +770,8 @@ function resultColumns(t) {
     b.rows.filter(r => r.type !== 'time').forEach(r => cols.push({ head: (b.title ? b.title + ' · ' : '') + r.label, get: (m, v) => v[r.id] ?? '—' }));
   });
   const hasTime = t.blocks.some(b => b.rows.some(r => r.type === 'time'));
-  if (hasTime && t.blocks.filter(b => b.rows.some(r => r.type === 'time' && !isEst(r))).length > 1) cols.push({ head: 'Meilleur', get: m => fmt(m.best) });
-  if (t.blocks.some(b => b.rows.some(isEst))) cols.push({ head: 'Écart estimations', get: m => m.gap == null ? '—' : round1(m.gap) + ' s' });
+  if (hasTime && t.blocks.filter(b => b.rows.some(r => r.type === 'time' && !isEst(r))).length > 1) cols.push({ head: 'Meilleur temps', get: m => fmt(m.best) });
+  if (t.blocks.some(b => b.rows.some(isEst))) cols.push({ head: 'Écart aux estimations (total)', get: m => m.gap == null ? '—' : round1(m.gap) + ' s' });
   if (hasTime) cols.push({ head: segHead(t), get: m => m.pace == null ? '—' : round1(m.pace) + ' s' });
   return cols;
 }
@@ -844,7 +844,7 @@ function exportCSV() {
   const c = $('resultClass').value, t = tplById($('resultTpl').value); if (!t) return;
   const rows = t.blocks.flatMap(b => b.rows.map(r => ({ r, head: (b.title ? b.title + ' · ' : '') + r.label })));
   const B = bar(t.bareme);
-  const lines = [['Élève', 'Statut', ...rows.map(x => x.head), 'Meilleur', 'Écart estimations (s)', segHead(t).replace(' (régularité)', '') + ' (s)', ...(B && B.v2 ? v2CSVHead(B) : B ? ['Sexe', 'AFL1 Performance', 'AFL1 Régularité', 'AFL1', 'Choix AFL2-AFL3', 'Écarts cumulés (s)', 'AFL2 degré', 'AFL2 points', 'AFL3 Rôle', 'AFL3 (degré)', 'AFL3 points', 'Note /20'] : [])]];
+  const lines = [['Élève', 'Statut', ...rows.map(x => x.head), 'Meilleur', 'Écart estimations (s)', segHead(t) + ' (s)', ...(B && B.v2 ? v2CSVHead(B) : B ? ['Sexe', 'AFL1 Performance', 'AFL1 Régularité', 'AFL1', 'Choix AFL2-AFL3', 'Écarts cumulés (s)', 'AFL2 degré', 'AFL2 points', 'AFL3 Rôle', 'AFL3 (degré)', 'AFL3 points', 'Note /20'] : [])]];
   lines[0].unshift('Classe');
   for (const s of resultStudents(c, t)) {
     const r = latestScan(s.id, t.id), m = r ? metrics(t, r.values) : null;
