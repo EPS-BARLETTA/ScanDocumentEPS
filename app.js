@@ -107,7 +107,9 @@ function migrate() {
   state.templates = state.templates.filter(t => !(t.id !== 'lib' && !LIBRARY.some(l => l.id === t.id) && LIBRARY.some(l => sameAs(t, l) && t.name.startsWith(l.name)) && !(t.printedFor || []).length && !state.scans.some(x => x.templateId === t.id) && !state.queue.some(q => q.tplId === t.id)));
   for (const lib of LIBRARY) if (!tplById(lib.id) && (!state.removedLib.includes(lib.id) || state.scans.some(s => s.races || s.templateId === lib.id))) state.templates.push(Object.assign(JSON.parse(JSON.stringify(lib)), { createdAt: today() }));
   for (const c of state.classes) c.folder = c.folder || schoolYear();
-  for (const t of state.templates) { t.printedFor = t.printedFor || []; t.createdAt = t.createdAt || today(); if (t.id === 't2x800' && !('bareme' in t)) t.bareme = 'ca1-2x800'; if (t.id === 't2x800' && t.name === 'Demi-fond 2 × 800 m') t.name = LIBRARY[0].name; }
+  for (const t of state.templates) { t.printedFor = t.printedFor || []; t.createdAt = t.createdAt || today();
+    // jamais imprimée ni lue : passe aux grandes bulles (les fiches déjà imprimées gardent leur mise en page)
+    if (t.lay !== 2 && !t.printedFor.length && !t.locked && !state.scans.some(x => x.templateId === t.id) && !state.queue.some(q => q.tplId === t.id)) t.lay = 2; if (t.id === 't2x800' && !('bareme' in t)) t.bareme = 'ca1-2x800'; if (t.id === 't2x800' && t.name === 'Demi-fond 2 × 800 m') t.name = LIBRARY[0].name; }
   state.baremes = (state.baremes || []).map(migrateV1);
   for (const s of state.scans) {
     if (s.races && !s.values) {
@@ -237,7 +239,7 @@ function renderLibrary() {
   }).join('') || '<p class="muted">Aucune fiche : choisis un modèle ci-dessus ou crée une fiche vierge.</p>';
 }
 async function useModel(i) {
-  const t = JSON.parse(JSON.stringify(LIBRARY[i])); t.id = sid('t'); t.createdAt = today(); t.printedFor = []; t.locked = false;
+  const t = JSON.parse(JSON.stringify(LIBRARY[i])); t.id = sid('t'); t.createdAt = today(); t.printedFor = []; t.locked = false; t.lay = 2;
   const same = state.templates.filter(x => x.name === t.name || x.name.startsWith(t.name + ' (')).length; if (same) t.name += ' (' + (same + 1) + ')';
   state.templates.push(t); await persist(); editTpl(t.id);
 }
@@ -351,8 +353,8 @@ const moveRow = (bi, ri, d) => tplMut(t => { const r = t.blocks[bi].rows, j = ri
 const addBlock = () => tplMut(t => t.blocks.push({ title: 'Bloc ' + (t.blocks.length + 1), rows: [{ id: sid('r'), label: 'Estimation', type: 'time' }, { id: sid('r'), label: 'Temps final', type: 'time' }] }));
 const delBlock = bi => { if (confirm('Supprimer ce bloc ?')) tplMut(t => t.blocks.splice(bi, 1)); };
 const moveBlock = (bi, d) => tplMut(t => { const j = bi + d; if (j < 0 || j >= t.blocks.length) return; [t.blocks[bi], t.blocks[j]] = [t.blocks[j], t.blocks[bi]]; });
-async function newTpl() { const t = { id: sid('t'), name: 'Nouvelle fiche', createdAt: today(), printedFor: [], format: 'auto', minutesMax: 5, cumulative: true, blocks: [{ title: 'Course 1', rows: [{ id: sid('r'), label: 'Estimation', type: 'time' }, { id: sid('r'), label: 'Temps final', type: 'time' }] }] }; state.templates.push(t); await persist(); editTpl(t.id); }
-async function dupTpl() { const s = curTpl(); if (!s) return; const t = JSON.parse(JSON.stringify(s)); t.id = sid('t'); t.name = s.name + ' (copie)'; t.locked = false; t.printedFor = []; t.createdAt = today(); t.blocks.forEach(b => b.rows.forEach(r => { r.id = sid('r'); })); state.templates.push(t); await persist(); editTpl(t.id); }
+async function newTpl() { const t = { id: sid('t'), lay: 2, name: 'Nouvelle fiche', createdAt: today(), printedFor: [], format: 'auto', minutesMax: 5, cumulative: true, blocks: [{ title: 'Course 1', rows: [{ id: sid('r'), label: 'Estimation', type: 'time' }, { id: sid('r'), label: 'Temps final', type: 'time' }] }] }; state.templates.push(t); await persist(); editTpl(t.id); }
+async function dupTpl() { const s = curTpl(); if (!s) return; const t = JSON.parse(JSON.stringify(s)); t.id = sid('t'); t.lay = 2; t.name = s.name + ' (copie)'; t.locked = false; t.printedFor = []; t.createdAt = today(); t.blocks.forEach(b => b.rows.forEach(r => { r.id = sid('r'); })); state.templates.push(t); await persist(); editTpl(t.id); }
 async function delTpl() { const t = curTpl(); if (!t) return; if (tplUsed(t)) return alert('Des fiches lues utilisent ce modèle : suppression impossible.'); if (!confirm('Supprimer la fiche « ' + t.name + ' » ?' + (t.locked ? ' Les fiches déjà imprimées ne pourront plus être lues.' : ''))) return; state.templates = state.templates.filter(x => x.id !== t.id); if (LIBRARY.some(l => l.id === t.id)) state.removedLib.push(t.id); editorTpl = null; editorOpen = false; await persist(); render(); }
 async function unlockTpl() { const t = curTpl(); if (!t) return; if (!confirm('Si tu modifies cette fiche, les exemplaires déjà imprimés ne seront plus lus correctement. Déverrouiller ?')) return; t.locked = false; await persist(); render(); }
 
@@ -648,7 +650,7 @@ function editScan(id) {
 
 /* ---------- Scan par lot ---------- */
 function compressPhoto(file) { return new Promise((resolve, reject) => { const img = new Image(), url = typeof file === 'string' ? file : URL.createObjectURL(file); img.onload = () => { const canvas = document.createElement('canvas'), scale = Math.min(1, 1400 / img.width, 1900 / img.height); canvas.width = Math.round(img.width * scale); canvas.height = Math.round(img.height * scale); canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height); if (typeof file !== 'string') URL.revokeObjectURL(url); resolve(canvas.toDataURL('image/jpeg', .7)); }; img.onerror = () => reject(Error('Photo illisible')); img.src = url; }); }
-function readOpts() { return { templateFor: ref => tplById(ref.tpl || 't2x800') || LIBRARY.find(l => l.id === (ref.tpl || 't2x800')), fallback: tplById($('batchTpl').value) }; }
+function readOpts() { return { templateFor: ref => { const t = tplById(ref.tpl || 't2x800') || LIBRARY.find(l => l.id === (ref.tpl || 't2x800')); return t ? Object.assign({}, t, { lay: ref.lay2 ? 2 : undefined }) : null; }, fallback: tplById($('batchTpl').value) }; }
 async function readSafe(src) {
   let read;
   try { read = await Fiche.read(src, readOpts()); } catch (err) { return { markers: false, ref: null, values: {}, tplId: null, issues: ['Lecture impossible : ' + err.message] }; }

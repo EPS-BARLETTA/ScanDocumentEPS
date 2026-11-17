@@ -41,8 +41,8 @@ const sgn = v => (v > 0 ? '+' : v < 0 ? '−' : '') + String(Math.abs(Math.round
 
 /* ---------- 1. Scan en continu ---------- */
 let raf = null;
-async function rafaleOpen() {
-  const classId = $('batchClass').value; if (!classId) return alert('Choisis d’abord la classe.');
+async function rafaleOpen(cid, back) {
+  const classId = cid || $('batchClass').value; if (!classId) return alert('Choisis d’abord la classe.');
   let stream;
   try { stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 3840 }, height: { ideal: 2160 } }, audio: false }); }
   catch (e) { return alert('Caméra inaccessible. Autorise la caméra pour ce site (Réglages › Safari › Caméra), ou utilise « Prendre une photo ».'); }
@@ -53,7 +53,7 @@ async function rafaleOpen() {
   document.body.appendChild(ov);
   const v = ov.querySelector('video'); v.srcObject = stream; try { await v.play(); } catch (e) { }
   beep.ctx = beep.ctx || (() => { try { return new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { return null; } })();
-  raf = { seen: new Set(), stream, v, ov, classId, auto: true, armed: true, stable: 0, prev: null, lost: 0, pending: [], working: false, ok: 0, check: 0, log: [], tpl: null, shooting: false };
+  raf = { back, seen: new Set(), stream, v, ov, classId, auto: true, armed: true, stable: 0, prev: null, lost: 0, pending: [], working: false, ok: 0, check: 0, log: [], tpl: null, shooting: false };
   raf.timer = setInterval(rafaleTick, 380);
 }
 function rafaleAuto() { raf.auto = !raf.auto; const b = $('rAuto'); b.classList.toggle('off', !raf.auto); b.textContent = raf.auto ? 'Auto ✓' : 'Auto ✗'; }
@@ -111,6 +111,7 @@ async function rafaleClose() {
   if (!raf) return; const r = raf;
   if (r.pending.length || r.working) { hint('Fin de la lecture…'); while (r.pending.length || r.working) await new Promise(ok => setTimeout(ok, 200)); }
   clearInterval(r.timer); r.stream.getTracks().forEach(t => t.stop()); r.ov.remove(); raf = null;
+  if (r.back) { view(r.back); return; }
   $('batchClass').value = r.classId; render();
   const cta = $('batchDone'); if (cta && r.tpl && r.ok) { cta.classList.remove('hidden'); cta.innerHTML = '<div><b>✓ ' + r.ok + ' fiche(s) rangée(s)' + (r.check ? ' · ' + r.check + ' à vérifier' : '') + '</b><span class="muted" style="display:block">' + escapeHtml(className(r.classId)) + '</span></div><button onclick="goResults(\'' + r.tpl + '\',\'' + r.classId + '\')">📊 Voir les résultats et noter →</button>'; }
 }
@@ -167,12 +168,12 @@ function parsePF(html, fname) {
   return { name: fname, title, meta, key, course: 'auto', rows };
 }
 async function pfImport(e) {
-  const t = tplById($('resultTpl').value); if (!t) return;
+  const t = tplById(e.target.dataset.tid || $('resultTpl').value); if (!t) return;
   const P = pfData(t.id), files = [...e.target.files]; e.target.value = '';
   let n = 0;
   for (const f of files) { try { const p = parsePF(await f.text(), f.name); if (!p.rows.length) continue; P.files = P.files.filter(x => !(x.key === p.key && x.meta === p.meta)); P.files.push(p); n++; } catch (err) { } }
   P.files.sort((a, b) => a.key.localeCompare(b.key));
-  await persist(); renderResults();
+  await persist(); render();
   alert(n ? n + ' course(s) PhotoFinish importée(s). Les écarts avec les fiches s’affichent en rouge en haut des résultats.' : 'Aucun fichier PhotoFinish reconnu (exporte la course en HTML depuis PhotoFinish).');
 }
 function pfStudent(name, studs) {
@@ -320,9 +321,9 @@ function studentDetail(t, s, pft) {
   const st = scanState(r); h += '<p class="etat">Fiche : ' + ({ validated: 'validée', auto: 'lue, non validée', check: 'à vérifier' }[st] || '') + (r.observer ? ' · observateur : ' + escapeHtml(r.observer) : '') + '</p>';
   return h + '</article>';
 }
-function exportDetail() {
-  const t = tplById($('resultTpl').value); if (!t) return;
-  const sel = $('resultClass').value, cids = sel === '*' ? classesUsing(t) : [sel], pft = pfTimes(t);
+function exportDetail(tid, cid) {
+  const t = tplById(tid || $('resultTpl').value); if (!t) return;
+  const sel = cid || $('resultClass').value, cids = sel === '*' ? classesUsing(t) : [sel], pft = pfTimes(t);
   const css = 'body{font-family:system-ui,-apple-system,sans-serif;color:#18314c;margin:24px;background:#f5f7fb}h1{color:#123d66;margin:0}.sub{color:#5a6f85}.cover{min-height:80vh;display:flex;flex-direction:column;justify-content:center;border:3px solid #123d66;border-radius:18px;padding:40px;margin-bottom:30px;background:#fff}.cover h1{font-size:34px}.kv{font-size:18px;margin:6px 0}.eleve{background:#fff;border-radius:16px;padding:16px 20px;margin:16px 0;box-shadow:0 4px 14px rgba(0,0,0,.06);break-inside:avoid}.eleve h2{margin:0 0 10px;color:#123d66}.eleve h2 small{font-size:14px;color:#5a6f85;font-weight:500}.courses{display:flex;gap:16px;flex-wrap:wrap}.course{flex:1;min-width:260px}.course h3{margin:4px 0;color:#1267a5}table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid #e3eaf2;padding:5px 8px;text-align:left;font-size:14px}th{color:#5a6f85;font-weight:600}tr.fin td{background:#eef6ff}.sum{background:#f2f6fb;border-radius:10px;padding:8px 12px}.al{background:#fee2e2;color:#991b1b;border-radius:10px;padding:8px 12px;font-weight:700}.etat{color:#5a6f85;font-size:13px}@media print{body{background:#fff;margin:10mm}.cover{min-height:250mm;break-after:page}.eleve{box-shadow:none;border:1px solid #d5e0ea}}';
   const body = cids.map(c => '<h1 style="margin-top:30px">' + escapeHtml(className(c)) + '</h1>' + resultStudents(c, t).map(s => studentDetail(t, s, pft)).join('')).join('');
   const doc = '<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' + escapeHtml(t.name) + ' — bilan détaillé</title><style>' + css + '</style></head><body>' + coverHTML(t, cids, 'Bilan détaillé par élève') + body + '</body></html>';
@@ -353,7 +354,7 @@ async function redoEval(tid) {
   const base = s.name.replace(/\s+—\s+(évaluation|session|séance).*$/i, '');
   const name = prompt('Nom de la nouvelle évaluation (les résultats de « ' + s.name + ' » restent à part) :', base + ' — évaluation du ' + new Date().toLocaleDateString('fr-FR'));
   if (!name || !name.trim()) return;
-  const t = JSON.parse(JSON.stringify(s)); t.id = sid('t'); t.name = name.trim(); t.locked = false; t.printedFor = []; t.createdAt = today();
+  const t = JSON.parse(JSON.stringify(s)); t.id = sid('t'); t.lay = 2; t.name = name.trim(); t.locked = false; t.printedFor = []; t.createdAt = today();
   t.blocks.forEach(b => b.rows.forEach(r => { r.id = sid('r'); }));
   state.templates.push(t); await persist(); render();
   alert('« ' + t.name + ' » est prête : même fiche, même barème, résultats séparés.\nLes choix AFL2-AFL3 des élèves sont repris.\nImprime maintenant les fiches de la classe.');

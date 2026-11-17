@@ -12,14 +12,15 @@
   const TOP = 66;               // première ligne utile sous l'en-tête
   const n2 = v => Math.round(v * 100) / 100;
 
-  function frame(fmt) {
+  function frame(fmt, v2) {
     const { W, H } = FORMATS[fmt];
     return {
       fmt, W, H,
       markers: [[INSET, INSET], [W - INSET, INSET], [W - INSET, H - INSET], [INSET, H - INSET]],
       qr: { x: W - 44, y: 16, size: QR },
-      box: { x: 29, w: 15, h: 5.6 },
-      gx: 48, corr: { x: W - 10.5, s: 4 },
+      // v2 (fiches créées à partir de novembre 2026) : case manuscrite et bulles plus grandes
+      box: v2 ? { x: 27.5, w: 18.5, h: 7.4 } : { x: 29, w: 15, h: 5.6 },
+      gx: v2 ? 49.5 : 48, corr: { x: W - 10.5, s: 4 },
       bottom: H - 18
     };
   }
@@ -35,8 +36,8 @@
     const blocks = (tpl.blocks || []).filter(b => (b.rows || []).length);
     if (!blocks.length) return { ok: false, error: 'Ajoute au moins une ligne' };
     const tryFmt = fmt => {
-      const F = frame(fmt), gap = 2.6;
-      let sp = fmt === 'A4' ? 4.6 : 3.8;
+      const v2 = tpl.lay === 2, F = frame(fmt, v2), gap = v2 ? 2 : 2.6;
+      let sp = v2 ? (fmt === 'A4' ? 5.4 : 4.4) : fmt === 'A4' ? 4.6 : 3.8;
       for (const b of blocks) for (const row of b.rows) {
         const g = rowGroups(row, tpl), n = g.reduce((a, x) => a + x.n, 0);
         if (!n) return { ok: false, error: 'La ligne « ' + row.label + ' » n’a aucune case' };
@@ -44,11 +45,11 @@
         sp = Math.min(sp, (avail - (g.length - 1) * gap) / Math.max(1, n - 1));
       }
       if (sp < 2.9) return { ok: false, error: 'Ligne trop longue (trop de cases)' };
-      const r = Math.min(fmt === 'A4' ? 1.9 : 1.6, sp * 0.42);
+      const r = v2 ? Math.min(fmt === 'A4' ? 2.3 : 2, sp * 0.45) : Math.min(fmt === 'A4' ? 1.9 : 1.6, sp * 0.42);
       let headers = 0, rows = 0;
       for (const b of blocks) b.rows.forEach((row, i) => { rows++; if (row.type !== 'choice' && (i === 0 || b.rows[i - 1].type !== row.type)) headers++; });
       const fixed = blocks.length * 9 + headers * 4.6, avail = F.bottom - TOP;
-      const rh = Math.min(tpl.roomy ? (fmt === 'A4' ? 15 : 13) : fmt === 'A4' ? 10 : 8.2, (avail - fixed - (tpl.lapHelper ? 46 : 0)) / rows);
+      const rh = Math.min(tpl.roomy ? (fmt === 'A4' ? 15 : 13) : v2 ? (fmt === 'A4' ? 11 : 9.4) : fmt === 'A4' ? 10 : 8.2, (avail - fixed - (tpl.lapHelper ? 46 : 0)) / rows);
       if (rh < 6.4) return { ok: false, error: 'Trop de lignes pour une fiche ' + fmt };
       const out = { ok: true, fmt, F, sp, r, rh, blocks: [], rows: [] };
       let y = TOP + 3;
@@ -116,7 +117,9 @@
     }
     o.push(text(14, 38, 3, 'Observateur : ................................'));
     o.push(text(14, 44, 3, 'Date : ......./......./..........'));
-    o.push('<path d="' + qrPath(opts.payload, F.qr) + '" fill="' + (opts.qrColor || tpl.qrColor || '#000') + '"/>');
+    let payload = opts.payload;
+    if (tpl.lay === 2 && typeof payload === 'string' && payload.startsWith(PREFIX)) { const pp = payload.slice(PREFIX.length).split(':'); if (pp[2] && !/~2$/.test(pp[2])) { pp[2] += '~2'; payload = PREFIX + pp.join(':'); } }
+    o.push('<path d="' + qrPath(payload, F.qr) + '" fill="' + (opts.qrColor || tpl.qrColor || '#000') + '"/>');
     o.push(text(F.qr.x + QR / 2, F.qr.y + QR + 3, 2, 'ne pas masquer', ' text-anchor="middle" fill="#666"'));
     o.push('<rect x="12" y="47.5" width="' + (F.W - 24) + '" height="15" rx="2" fill="#eef2f8"/>');
     const hasTime = lay.rows.some(r => r.row.type === 'time');
@@ -195,6 +198,11 @@
   function parsePayload(p) {
     if (typeof p !== 'string' || !p.startsWith(PREFIX)) return null;
     const parts = p.slice(PREFIX.length).split(':');
+    // « ~2 » après l'identifiant de fiche = mise en page grandes bulles (v2), quelle que soit la fiche enregistrée sur l'appareil
+    const lay2 = /~2$/.test(parts[2] || ''); if (lay2) parts[2] = parts[2].slice(0, -2);
+    const r = parsePayload0(parts); if (r) r.lay2 = lay2; return r;
+  }
+  function parsePayload0(parts) {
     if (parts[0] === 'E' && parts[1]) return { kind: 'student', id: parts[1], tpl: parts[2] || null, name: parts[3] ? safeDecode(parts.slice(3).join(':')).replace(/_/g, ' ') : null };
     if (parts[0] === 'S' && parts[1]) return { kind: 'spare', classId: parts[1], tpl: parts[2] || null };
     if (parts[0] === 'N' && parts[1]) return { kind: 'name', name: decodeURIComponent(parts[1]), tpl: parts[2] || null };

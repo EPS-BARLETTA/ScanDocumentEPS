@@ -378,7 +378,7 @@ function fwTpl() {
     return { title: mixed.length ? (mixed.filter(x => x === d).length > 1 ? ord(i + 1) + ' ' : '') + d + ' m' : n > 1 ? ord(i + 1) + ' ' + d + ' m' : d + ' m', rows };
   });
   const dm = mixed.length ? Math.max(...mixed) : d0;
-  return { id: sid('t'), name: fw.name.trim() || (mixed.length ? mixed.join(' / ') + ' m' : n > 1 ? n + ' × ' + d0 + ' m' : d0 + ' m'), format: 'auto', minutesMax: dm >= 1000 ? 9 : 5, cumulative: true, blocks, createdAt: today(), printedFor: [] };
+  return { id: sid('t'), lay: 2, name: fw.name.trim() || (mixed.length ? mixed.join(' / ') + ' m' : n > 1 ? n + ' × ' + d0 + ' m' : d0 + ' m'), format: 'auto', minutesMax: dm >= 1000 ? 9 : 5, cumulative: true, blocks, createdAt: today(), printedFor: [] };
 }
 function renderFicheWizard() {
   const box = $('ficheWizard'); if (!box) return;
