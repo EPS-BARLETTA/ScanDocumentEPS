@@ -158,23 +158,36 @@ function parsePF(html, fname) {
   const title = d.querySelector('h1')?.textContent.trim() || fname, meta = d.querySelector('.m')?.textContent.trim() || '';
   const fm = String(fname).match(/(\d{4})-(\d{2})-(\d{2})_(\d{2})h(\d{2})/), mm = meta.match(/(\d{1,2})h(\d{2})/);
   const key = fm ? fm.slice(1, 6).join('') : (mm ? '0000000' + mm[1].padStart(2, '0') + mm[2] : fname);
-  const rows = []; let last = null;
+  // photos d'arrivée : une par ligne de classement, partagée par les ex aequo (rowspan)
+  const rows = [], photos = []; let last = null, lastPh = null;
   d.querySelectorAll('tbody tr').forEach(tr => {
     const tds = [...tr.children], tcell = tr.querySelector('td.t'), ncell = tds.find(td => !td.className && td.textContent.trim());
-    if (tcell) last = sec(tcell.textContent.trim());
-    if (ncell) rows.push({ name: ncell.textContent.trim(), time: tcell ? sec(tcell.textContent.trim()) : last });
+    if (tcell) {
+      last = sec(tcell.textContent.trim());
+      const src = tr.querySelector('td.ph img')?.getAttribute('src') || '';
+      lastPh = /^data:image\//.test(src) ? photos.push(src) - 1 : null;
+    }
+    if (ncell) rows.push({ name: ncell.textContent.trim(), time: tcell ? sec(tcell.textContent.trim()) : last, ph: lastPh });
   });
   d.querySelectorAll('.nf div').forEach(x => { const n = x.textContent.trim(); if (n) rows.push({ name: n, time: null, dnf: true }); });
-  return { name: fname, title, meta, key, course: 'auto', rows };
+  return { name: fname, title, meta, key, course: 'auto', rows, photos };
+}
+// photo réduite (≈ 300 px de large) pour ne pas alourdir la sauvegarde
+function pfShrink(src, max) {
+  return new Promise(res => {
+    const im = new Image();
+    im.onload = () => { try { const k = Math.min(1, (max || 300) / im.naturalWidth), c = document.createElement('canvas'); c.width = Math.round(im.naturalWidth * k); c.height = Math.round(im.naturalHeight * k); c.getContext('2d').drawImage(im, 0, 0, c.width, c.height); res(c.toDataURL('image/jpeg', 0.72)); } catch (e) { res(src); } };
+    im.onerror = () => res(null); im.src = src;
+  });
 }
 async function pfImport(e) {
   const t = tplById(e.target.dataset.tid || $('resultTpl').value); if (!t) return;
   const P = pfData(t.id), files = [...e.target.files]; e.target.value = '';
-  let n = 0;
-  for (const f of files) { try { const p = parsePF(await f.text(), f.name); if (!p.rows.length) continue; P.files = P.files.filter(x => !(x.key === p.key && x.meta === p.meta)); P.files.push(p); n++; } catch (err) { } }
+  let n = 0, nph = 0;
+  for (const f of files) { try { const p = parsePF(await f.text(), f.name); if (!p.rows.length) continue; p.photos = await Promise.all(p.photos.map(x => pfShrink(x))); nph += p.photos.filter(Boolean).length; P.files = P.files.filter(x => !(x.key === p.key && x.meta === p.meta)); P.files.push(p); n++; } catch (err) { } }
   P.files.sort((a, b) => a.key.localeCompare(b.key));
   await persist(); render();
-  alert(n ? n + ' course(s) PhotoFinish importée(s). Les écarts avec les fiches s’affichent en rouge en haut des résultats.' : 'Aucun fichier PhotoFinish reconnu (exporte la course en HTML depuis PhotoFinish).');
+  alert(n ? n + ' course(s) PhotoFinish importée(s)' + (nph ? ', ' + nph + ' photo(s) d’arrivée rangées avec les élèves' : '') + '. Les écarts avec les fiches s’affichent en rouge en haut des résultats.' : 'Aucun fichier PhotoFinish reconnu (exporte la course en HTML depuis PhotoFinish).');
 }
 function pfStudent(name, studs) {
   const k = nameKey(name), ex = studs.filter(s => nameKey(s.name) === k); if (ex.length === 1) return ex[0];
@@ -182,15 +195,29 @@ function pfStudent(name, studs) {
 }
 function pfTimes(t) { // { sid: [temps course 1, temps course 2…] , unknown: [noms] }
   const P = (state.pf || {})[t.id]; if (!P || !P.files.length) return null;
-  const studs = resultStudents('*', t).length ? resultStudents('*', t) : state.students, out = {}, unknown = new Set();
+  const studs = resultStudents('*', t).length ? resultStudents('*', t) : state.students, out = {}, ph = {}, unknown = new Set();
   P.files.forEach(f => f.rows.forEach(r => {
     if (/^non nomm/i.test(r.name)) return; // coureur sans nom dans PhotoFinish
     const s = pfStudent(r.name, studs); if (!s) { unknown.add(r.name); return; }
     const a = out[s.id] = out[s.id] || [];
     let k = +f.course - 1; if (f.course === 'auto') { k = 0; while (a[k] !== undefined) k++; }
     a[k] = r.dnf ? 'dnf' : r.time;
+    const src = r.ph != null && f.photos ? f.photos[r.ph] : null;
+    if (src) (ph[s.id] = ph[s.id] || [])[k] = { src, label: (f.meta || f.title || '').replace(/^Classe\s+/, '') };
   }));
-  return { by: out, unknown: [...unknown], tol: +P.tol || 2 };
+  return { by: out, ph, unknown: [...unknown], tol: +P.tol || 2 };
+}
+// vignettes des photos d'arrivée d'un élève (touchées = agrandies)
+function pfThumbs(pft, s, t) {
+  const L = pft && pft.ph && pft.ph[s.id]; if (!L || !L.some(Boolean)) return '';
+  const tb = timedBlocks(t);
+  return '<div class="pfph">' + L.map((p, k) => p ? '<figure onclick="pfZoom(' + k + ',\'' + s.id + '\')"><img src="' + p.src + '" alt=""><figcaption>' + escapeHtml((tb[k] && tb[k].b.title ? tb[k].b.title.split(' · ')[0] : 'Course ' + (k + 1))) + '</figcaption></figure>' : '').join('') + '</div>';
+}
+function pfZoom(k, sid) {
+  const t = tplById($('resultTpl').value) || tplById((state.scans.find(x => x.id === editing) || {}).templateId), pft = t && pfTimes(t), p = pft && pft.ph[sid] && pft.ph[sid][k]; if (!p) return;
+  const st = state.students.find(x => x.id === sid), o = document.createElement('div'); o.className = 'pfzoom';
+  o.innerHTML = '<div><img src="' + p.src + '" alt=""><p><b>' + escapeHtml(st ? st.name : '') + '</b> · ' + escapeHtml(p.label) + '</p><button>Fermer</button></div>';
+  o.onclick = () => o.remove(); document.body.appendChild(o);
 }
 async function pfSet(k, v) { const t = tplById($('resultTpl').value), P = pfData(t.id); if (k === 'tol') P.tol = Math.max(0, +String(v).replace(',', '.') || 0); else if (k.startsWith('c')) P.files[+k.slice(1)].course = v; else if (k.startsWith('x')) P.files.splice(+k.slice(1), 1); await persist(); renderResults(); }
 
@@ -268,14 +295,14 @@ function renderControls() {
     const cn = pft.by;
     h += '<details class="pfbox"' + (pft.unknown.length ? ' open' : '') + '><summary><b>⏱ PhotoFinish : ' + P.files.length + ' course(s)</b> · alerte si l’écart dépasse <b>' + nf(pft.tol) + ' s</b></summary>' +
       '<div class="flex" style="margin:10px 0"><label style="margin:0">Écart toléré</label><input style="width:80px" inputmode="decimal" value="' + nf(pft.tol) + '" onchange="pfSet(\'tol\',this.value)"> s</div>' +
-      '<table><thead><tr><th>Fichier</th><th>Élèves</th><th>Course</th><th></th></tr></thead><tbody>' + P.files.map((f, i) => '<tr><td>' + escapeHtml(f.title) + ' · ' + escapeHtml(f.meta) + '</td><td>' + f.rows.length + '</td><td><select onchange="pfSet(\'c' + i + '\',this.value)">' + [['auto', 'Automatique'], ...timedBlocks(t).map((x, k) => [String(k + 1), x.b.title || 'Course ' + (k + 1)])].map(([v, l]) => '<option value="' + v + '"' + (String(f.course) === v ? ' selected' : '') + '>' + escapeHtml(l) + '</option>').join('') + '</select></td><td><button class="mini" onclick="pfSet(\'x' + i + '\')">Retirer</button></td></tr>').join('') + '</tbody></table>' +
+      '<table><thead><tr><th>Fichier</th><th>Élèves</th><th>Course</th><th></th></tr></thead><tbody>' + P.files.map((f, i) => '<tr><td>' + escapeHtml(f.title) + ' · ' + escapeHtml(f.meta) + (f.photos && f.photos.length ? ' <small>📷 ' + f.photos.filter(Boolean).length + '</small>' : ' <small class="muted">sans photo (réimporter)</small>') + '</td><td>' + f.rows.length + '</td><td><select onchange="pfSet(\'c' + i + '\',this.value)">' + [['auto', 'Automatique'], ...timedBlocks(t).map((x, k) => [String(k + 1), x.b.title || 'Course ' + (k + 1)])].map(([v, l]) => '<option value="' + v + '"' + (String(f.course) === v ? ' selected' : '') + '>' + escapeHtml(l) + '</option>').join('') + '</select></td><td><button class="mini" onclick="pfSet(\'x' + i + '\')">Retirer</button></td></tr>').join('') + '</tbody></table>' +
       '<p class="muted">« Automatique » : pour chaque élève, sa 1re course dans l’ordre des heures = ' + escapeHtml(timedBlocks(t)[0]?.b.title || 'course 1') + ', la 2e = ' + escapeHtml(timedBlocks(t)[1]?.b.title || 'course 2') + '. Pas besoin de renommer les fichiers.</p>' +
       (pft.unknown.length ? '<p class="notice">Noms PhotoFinish non reconnus : ' + pft.unknown.map(escapeHtml).join(', ') + '</p>' : '') +
       (missPF.length ? '<p class="muted">Sans temps PhotoFinish : ' + missPF.map(s => escapeHtml(s.name)).join(', ') + '</p>' : '') + '</details>';
   }
   const nA = alerts.reduce((n, x) => n + x.a.length, 0), many = alerts.length > 4 && !ctrlAll, shown = many ? alerts.slice(0, 4) : alerts;
   if (alerts.length) h += '<div class="ctrl-alert"><h3>🚨 ' + alerts.length + ' élève(s) à contrôler</h3>' +
-    '<div class="cbulk"><span>Tout d’un coup :</span><button class="cb-me" onclick="ctrlBulk(false)">✓ Garder tous les temps des fiches</button>' + (alerts.some(x => x.a.some(a => a.kind === 'pf' && a.rowId)) ? '<button class="cb-pf" onclick="ctrlBulk(\'pf\')">⏱ Tout prendre de PhotoFinish</button>' : '') + (alerts.some(x => x.a.some(a => a.kind === 'est')) ? '<button class="cb-est" onclick="ctrlBulk(\'est\')">📝 Toutes les estimations annoncées</button>' : '') + '</div><ul>' + shown.map(x => '<li><b>' + escapeHtml(x.s.name) + '</b>' + x.a.map(a => '<div class="citem"><span>' + escapeHtml(a.text) + '</span>' + ctrlButtons(x.r, a) + '</div>').join('') + '<button class="linkbtn" onclick="editScan(\'' + x.r.id + '\')">Voir la photo de la fiche</button></li>').join('') + '</ul>' + (many ? '<button class="secondary" onclick="ctrlAll=true;renderControls()">Voir les ' + (alerts.length - 4) + ' autres élèves</button>' : '') + '</div>';
+    '<div class="cbulk"><span>Tout d’un coup :</span><button class="cb-me" onclick="ctrlBulk(false)">✓ Garder tous les temps des fiches</button>' + (alerts.some(x => x.a.some(a => a.kind === 'pf' && a.rowId)) ? '<button class="cb-pf" onclick="ctrlBulk(\'pf\')">⏱ Tout prendre de PhotoFinish</button>' : '') + (alerts.some(x => x.a.some(a => a.kind === 'est')) ? '<button class="cb-est" onclick="ctrlBulk(\'est\')">📝 Toutes les estimations annoncées</button>' : '') + '</div><ul>' + shown.map(x => '<li><b>' + escapeHtml(x.s.name) + '</b>' + x.a.map(a => '<div class="citem"><span>' + escapeHtml(a.text) + '</span>' + ctrlButtons(x.r, a) + '</div>').join('') + (x.a.some(a => a.kind === 'pf') ? pfThumbs(pft, x.s, t) : '') + '<button class="linkbtn" onclick="editScan(\'' + x.r.id + '\')">Voir la photo de la fiche</button></li>').join('') + '</ul>' + (many ? '<button class="secondary" onclick="ctrlAll=true;renderControls()">Voir les ' + (alerts.length - 4) + ' autres élèves</button>' : '') + '</div>';
   else if (hasAnn || (P && P.files.length)) h += '<p class="ctrl-ok">✓ Aucune différence avec ' + [hasAnn ? 'les estimations annoncées' : '', P && P.files.length ? 'PhotoFinish (± ' + nf(pft.tol) + ' s)' : ''].filter(Boolean).join(' ni avec ') + '.</p>';
   box.innerHTML = h;
 }
@@ -284,9 +311,9 @@ renderResults = function () { _renderResultsBase(); try { renderControls(); } ca
 const _editScanBase = editScan;
 editScan = function (id) {
   _editScanBase(id); const r = state.scans.find(x => x.id === id); if (!r) return;
-  const a = controlAlerts(tplById(r.templateId), state.students.find(x => x.id === r.studentId), r);
+  const t = tplById(r.templateId), s = state.students.find(x => x.id === r.studentId), a = controlAlerts(t, s, r), th = s && t ? pfThumbs(pfTimes(t), s, t) : '';
   let el = $('scanCtrl'); if (!el) { el = document.createElement('div'); el.id = 'scanCtrl'; $('scanIssues').parentNode.insertBefore(el, $('scanIssues')); }
-  el.innerHTML = a.length ? '<div class="ctrl-alert"><h3>🚨 À contrôler</h3><ul>' + a.map(x => '<li><div class="citem"><span>' + escapeHtml(x.text) + '</span>' + ctrlButtons(r, x) + '</div></li>').join('') + '</ul></div>' : '';
+  el.innerHTML = (a.length ? '<div class="ctrl-alert"><h3>🚨 À contrôler</h3><ul>' + a.map(x => '<li><div class="citem"><span>' + escapeHtml(x.text) + '</span>' + ctrlButtons(r, x) + '</div></li>').join('') + '</ul>' + th + '</div>' : (th ? '<div class="pfbox"><b>⏱ Photos d’arrivée PhotoFinish</b>' + th + '</div>' : ''));
 };
 
 /* ---------- 4. Bilan détaillé par élève (HTML) ---------- */
@@ -308,7 +335,8 @@ function studentDetail(t, s, pft) {
       if (B.segs && B.segs.length > 1) rows += '<tr><td>Régularité (tour le + lent − le + rapide)</td><td colspan="2">' + round1(Math.max(...B.segs) - Math.min(...B.segs)) + ' s</td></tr>';
       if (pf && pf[k] !== undefined) rows += '<tr><td>PhotoFinish</td><td colspan="2">' + (pf[k] === 'dnf' ? 'non classé' : fmtPF(pf[k]) + (B.final != null ? ' <small>(écart ' + sgn(B.final - pf[k]) + ' s)</small>' : '')) + '</td></tr>';
     }
-    return '<div class="course"><h3>' + escapeHtml(b.title || 'Relevé') + '</h3><table><thead><tr><th></th><th>Temps</th><th>' + (times.length > 1 ? 'Fraction' : '') + '</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+    const ph = k >= 0 && pft && pft.ph && pft.ph[s.id] && pft.ph[s.id][k];
+    return '<div class="course"><h3>' + escapeHtml(b.title || 'Relevé') + '</h3><table><thead><tr><th></th><th>Temps</th><th>' + (times.length > 1 ? 'Fraction' : '') + '</th></tr></thead><tbody>' + rows + '</tbody></table>' + (ph ? '<figure class="arr"><img src="' + ph.src + '" alt=""><figcaption>Photo d’arrivée · ' + escapeHtml(ph.label) + '</figcaption></figure>' : '') + '</div>';
   }).join('') + '</div>';
   const sum = [];
   if (m.best != null && timedBlocks(t).length > 1) sum.push('Meilleur temps : <b>' + fmt(m.best) + '</b>');
@@ -327,7 +355,7 @@ function studentDetail(t, s, pft) {
 function exportDetail(tid, cid) {
   const t = tplById(tid || $('resultTpl').value); if (!t) return;
   const sel = cid || $('resultClass').value, cids = sel === '*' ? classesUsing(t) : [sel], pft = pfTimes(t);
-  const css = 'body{font-family:system-ui,-apple-system,sans-serif;color:#18314c;margin:24px;background:#f5f7fb}h1{color:#123d66;margin:0}.sub{color:#5a6f85}.cover{min-height:80vh;display:flex;flex-direction:column;justify-content:center;border:3px solid #123d66;border-radius:18px;padding:40px;margin-bottom:30px;background:#fff}.cover h1{font-size:34px}.kv{font-size:18px;margin:6px 0}.eleve{background:#fff;border-radius:16px;padding:16px 20px;margin:16px 0;box-shadow:0 4px 14px rgba(0,0,0,.06);break-inside:avoid}.eleve h2{margin:0 0 10px;color:#123d66}.eleve h2 small{font-size:14px;color:#5a6f85;font-weight:500}.courses{display:flex;gap:16px;flex-wrap:wrap}.course{flex:1;min-width:260px}.course h3{margin:4px 0;color:#1267a5}table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid #e3eaf2;padding:5px 8px;text-align:left;font-size:14px}th{color:#5a6f85;font-weight:600}tr.fin td{background:#eef6ff}.sum{background:#f2f6fb;border-radius:10px;padding:8px 12px}.al{background:#fee2e2;color:#991b1b;border-radius:10px;padding:8px 12px;font-weight:700}.etat{color:#5a6f85;font-size:13px}@media print{body{background:#fff;margin:10mm}.cover{min-height:250mm;break-after:page}.eleve{box-shadow:none;border:1px solid #d5e0ea}}';
+  const css = 'body{font-family:system-ui,-apple-system,sans-serif;color:#18314c;margin:24px;background:#f5f7fb}h1{color:#123d66;margin:0}.sub{color:#5a6f85}.cover{min-height:80vh;display:flex;flex-direction:column;justify-content:center;border:3px solid #123d66;border-radius:18px;padding:40px;margin-bottom:30px;background:#fff}.cover h1{font-size:34px}.kv{font-size:18px;margin:6px 0}.eleve{background:#fff;border-radius:16px;padding:16px 20px;margin:16px 0;box-shadow:0 4px 14px rgba(0,0,0,.06);break-inside:avoid}.eleve h2{margin:0 0 10px;color:#123d66}.eleve h2 small{font-size:14px;color:#5a6f85;font-weight:500}.courses{display:flex;gap:16px;flex-wrap:wrap}.course{flex:1;min-width:260px}.course h3{margin:4px 0;color:#1267a5}table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid #e3eaf2;padding:5px 8px;text-align:left;font-size:14px}th{color:#5a6f85;font-weight:600}tr.fin td{background:#eef6ff}.sum{background:#f2f6fb;border-radius:10px;padding:8px 12px}.al{background:#fee2e2;color:#991b1b;border-radius:10px;padding:8px 12px;font-weight:700}.etat{color:#5a6f85;font-size:13px}.arr{margin:10px 0 0}.arr img{width:100%;max-width:240px;border-radius:10px;display:block}.arr figcaption{color:#5a6f85;font-size:12px;margin-top:3px}@media print{.arr img{max-width:160px}body{background:#fff;margin:10mm}.cover{min-height:250mm;break-after:page}.eleve{box-shadow:none;border:1px solid #d5e0ea}}';
   const body = cids.map(c => '<h1 style="margin-top:30px">' + escapeHtml(className(c)) + '</h1>' + resultStudents(c, t).map(s => studentDetail(t, s, pft)).join('')).join('');
   const doc = '<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' + escapeHtml(t.name) + ' — bilan détaillé</title><style>' + css + '</style></head><body>' + coverHTML(t, cids, 'Bilan détaillé par élève') + body + '</body></html>';
   download('bilan-' + slug(t.name) + '-' + (sel === '*' ? 'toutes-classes' : slug(className(cids[0]))) + '.html', doc, 'text/html;charset=utf-8');
@@ -335,6 +363,14 @@ function exportDetail(tid, cid) {
 
 /* ---------- Tableau des résultats : noms et en-têtes figés ---------- */
 (() => { const st = document.createElement('style'); st.textContent = `
+.pfph{display:flex;gap:10px;flex-wrap:wrap;margin:8px 0}
+.pfph figure{margin:0;cursor:pointer;text-align:center}
+.pfph img{height:130px;border-radius:10px;display:block;box-shadow:0 2px 8px rgba(0,0,0,.15)}
+.pfph figcaption{font-size:12px;color:#5a6f85;margin-top:3px}
+.pfzoom{position:fixed;inset:0;background:rgba(10,20,30,.85);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px}
+.pfzoom>div{max-width:min(92vw,560px);text-align:center;color:#fff}
+.pfzoom img{max-width:100%;max-height:78vh;border-radius:12px;display:block;margin:0 auto}
+.pfzoom button{margin-top:8px}
 #results .tablewrap{max-height:calc(100vh - 140px);overflow:auto;-webkit-overflow-scrolling:touch}
 #resultsTable,#resultsTable.gt{overflow:visible}
 #resultsTable thead th{position:sticky;z-index:3}
