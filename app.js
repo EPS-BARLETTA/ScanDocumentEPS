@@ -14,9 +14,14 @@ const LIBRARY = [
   { id: 't2x800', name: 'Demi-fond 2 × 800 m — CCF session 2027 (certificative)', format: 'auto', minutesMax: 5, cumulative: true, bareme: 'ca1-2x800',
     blocks: [1, 2].map(i => ({ title: (i === 1 ? '1er' : '2e') + ' 800 m', rows: [['e', 'Estimation'], ['a', '200 m'], ['b', '400 m'], ['c', '600 m'], ['d', '800 m']].map(([k, l]) => ({ id: 'c' + i + k, label: l, type: 'time' })) })) },
   { id: 't3x500', name: 'Demi-fond 3 × 500 m', format: 'auto', minutesMax: 5, cumulative: true,
-    blocks: [1, 2, 3].map(i => ({ title: 'Course ' + i, rows: [['e', 'Estimation'], ['a', '250 m'], ['b', '500 m']].map(([k, l]) => ({ id: 'c' + i + k, label: l, type: 'time' })) })) }
+    blocks: [1, 2, 3].map(i => ({ title: 'Course ' + i, rows: [['e', 'Estimation'], ['a', '250 m'], ['b', '500 m']].map(([k, l]) => ({ id: 'c' + i + k, label: l, type: 'time' })) })) },
+  { id: 'tm1000', name: 'Mission 1000 — piste de 100 m', format: 'auto', minutesMax: 9, cumulative: true,
+    blocks: [{ title: '1000 m · piste de 100 m', rows: [
+      { id: 'm1t', label: 'Tours faits', type: 'choice', options: ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10'] },
+      { id: 'm1a', label: '500 m', type: 'time' },
+      { id: 'm1b', label: '1000 m', type: 'time' }] }] }
 ];
-const LIB_DESC = { t2x800: '2 courses · estimation + passages 200, 400, 600 et 800 m (cumulés) · A5', t3x500: '3 courses · estimation + passages 250 et 500 m (cumulés) · A5' };
+const LIB_DESC = { t2x800: '2 courses · estimation + passages 200, 400, 600 et 800 m (cumulés) · A5', t3x500: '3 courses · estimation + passages 250 et 500 m (cumulés) · A5', tm1000: 'Piste de 100 m · tours complets (0 à 10) + temps à 500 m et 1000 m · A5' };
 /* ---------- Barèmes ---------- */
 const mmss = x => { const [m, s] = x.split(':').map(Number); return m * 60 + s; };
 const BAREMES = {
