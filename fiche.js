@@ -436,7 +436,30 @@
     return { digit: marked[0].k, state: d1 > 2.2 * d2 ? 'ok' : 'double' };
   }
 
+  // QR redressé : on rééchantillonne la zone du QR à 10 px/mm grâce au repérage des carrés (perspective, petite fiche, rotation)
+  function rectQR(rgba, w, h, M, F) {
+    const q = F.qr, m = 3, k = 10, N = Math.round((q.size + 2 * m) * k), g = new Float32Array(N * N), out = new Uint8ClampedArray(N * N * 4);
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+      const [sx0, sy0] = M(q.x - m + (x + 0.5) / k, q.y - m + (y + 0.5) / k), sx = Math.max(0, Math.min(w - 1.001, sx0)), sy = Math.max(0, Math.min(h - 1.001, sy0));
+      const ix = sx | 0, iy = sy | 0, fx = sx - ix, fy = sy - iy, i = (iy * w + ix) * 4, L = j => 0.3 * rgba[j] + 0.59 * rgba[j + 1] + 0.11 * rgba[j + 2];
+      g[y * N + x] = L(i) * (1 - fx) * (1 - fy) + L(i + 4) * fx * (1 - fy) + L(i + w * 4) * (1 - fx) * fy + L(i + w * 4 + 4) * fx * fy;
+    }
+    const tryRead = data => { const r = root.jsQR(data, N, N, { inversionAttempts: 'dontInvert' }); return r ? r.data : null; };
+    for (let i = 0; i < N * N; i++) { out[4 * i] = out[4 * i + 1] = out[4 * i + 2] = g[i]; out[4 * i + 3] = 255; }
+    let r = tryRead(out); if (r) return r;
+    // noir et blanc local (ombres, lumière inégale)
+    const S = new Float64Array((N + 1) * (N + 1));
+    for (let y = 0; y < N; y++) { let row = 0; for (let x = 0; x < N; x++) { row += g[y * N + x]; S[(y + 1) * (N + 1) + x + 1] = S[y * (N + 1) + x + 1] + row; } }
+    const R = Math.round(k * 3);
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+      const x0 = Math.max(0, x - R), x1 = Math.min(N, x + R + 1), y0 = Math.max(0, y - R), y1 = Math.min(N, y + R + 1);
+      const mean = (S[y1 * (N + 1) + x1] - S[y0 * (N + 1) + x1] - S[y1 * (N + 1) + x0] + S[y0 * (N + 1) + x0]) / ((x1 - x0) * (y1 - y0));
+      const v = g[y * N + x] < mean * 0.85 ? 0 : 255, o = 4 * (y * N + x); out[o] = out[o + 1] = out[o + 2] = v;
+    }
+    return tryRead(out);
+  }
   function cropQR(rgba, w, h, H, F) {
+    const rr = rectQR(rgba, w, h, H, F); if (rr) return rr;
     const m = 4, q = F.qr, c = [[q.x - m, q.y - m], [q.x + q.size + m, q.y - m], [q.x + q.size + m, q.y + q.size + m], [q.x - m, q.y + q.size + m]].map(([x, y]) => H(x, y));
     const x0 = Math.max(0, Math.floor(Math.min(...c.map(p => p[0])))), x1 = Math.min(w, Math.ceil(Math.max(...c.map(p => p[0]))));
     const y0 = Math.max(0, Math.floor(Math.min(...c.map(p => p[1])))), y1 = Math.min(h, Math.ceil(Math.max(...c.map(p => p[1]))));
@@ -495,7 +518,7 @@
     if (!H) { res.issues.push('Photo trop déformée : reprends-la de face'); return res; }
     res.markers = true;
     // bandeau du nom imprimé, redressé (pour reconnaître l'élève si son QR vient d'une ancienne liste)
-    if (res.ref && res.ref.kind === 'student') {
+    if (!res.ref || res.ref.kind === 'student') {
       const k = 8, x0 = 24, x1 = Math.min(F.qr.x - 2, 24 + 95), y0 = 19.2, y1 = 26.8, nw = Math.round((x1 - x0) * k), nh = Math.round((y1 - y0) * k), g = new Uint8ClampedArray(nw * nh);
       for (let j = 0; j < nh; j++) for (let i = 0; i < nw; i++) { const [u, v] = H(x0 + i / k, y0 + j / k); g[j * nw + i] = bilinear(gray, w, h, u, v); }
       res.nameStrip = { w: nw, h: nh, g };
@@ -575,7 +598,7 @@
     cv.width = Math.round(img.naturalWidth * s); cv.height = Math.round(img.naturalHeight * s);
     const ctx = cv.getContext('2d', { willReadFrequently: true });
     ctx.drawImage(img, 0, 0, cv.width, cv.height);
-    const qrZone = s >= 1 ? null : (Hk, Fk) => {
+    const qrZone = (Hk, Fk) => {
       const m = 4, q = Fk.qr, c = [[q.x - m, q.y - m], [q.x + q.size + m, q.y + q.size + m], [q.x + q.size + m, q.y - m], [q.x - m, q.y + q.size + m]].map(([x, y]) => Hk(x, y).map(v => v / s));
       const x0 = Math.max(0, Math.min(...c.map(p => p[0]))), y0 = Math.max(0, Math.min(...c.map(p => p[1])));
       const cw = Math.min(img.naturalWidth, Math.max(...c.map(p => p[0]))) - x0, chh = Math.min(img.naturalHeight, Math.max(...c.map(p => p[1]))) - y0;
@@ -584,8 +607,13 @@
       z.width = Math.round(cw * f); z.height = Math.round(chh * f);
       const zc = z.getContext('2d', { willReadFrequently: true });
       zc.drawImage(img, x0, y0, cw, chh, 0, 0, z.width, z.height);
-      const r = root.jsQR(zc.getImageData(0, 0, z.width, z.height).data, z.width, z.height, { inversionAttempts: 'dontInvert' });
-      return r ? r.data : null;
+      const zd = zc.getImageData(0, 0, z.width, z.height).data;
+      const r = root.jsQR(zd, z.width, z.height, { inversionAttempts: 'dontInvert' });
+      if (r) return r.data;
+      // zone à pleine résolution, redressée
+      const g = Math.min(1, 1600 / Math.max(cw, chh)), z2 = document.createElement('canvas'); z2.width = Math.round(cw * g); z2.height = Math.round(chh * g);
+      const c2 = z2.getContext('2d', { willReadFrequently: true }); c2.drawImage(img, x0, y0, cw, chh, 0, 0, z2.width, z2.height);
+      return rectQR(c2.getImageData(0, 0, z2.width, z2.height).data, z2.width, z2.height, (x, y) => { const [u, v] = Hk(x, y); return [(u / s - x0) * g, (v / s - y0) * g]; }, Fk);
     };
     return analyse(ctx.getImageData(0, 0, cv.width, cv.height).data, cv.width, cv.height, Object.assign({}, opts, { qrZone }));
   }

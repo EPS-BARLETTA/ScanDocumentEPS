@@ -652,16 +652,27 @@ function editScan(id) {
 }
 
 /* ---------- Scan par lot ---------- */
-function compressPhoto(file) { return new Promise((resolve, reject) => { const img = new Image(), url = typeof file === 'string' ? file : URL.createObjectURL(file); img.onload = () => { const canvas = document.createElement('canvas'), scale = Math.min(1, 1400 / img.width, 1900 / img.height); canvas.width = Math.round(img.width * scale); canvas.height = Math.round(img.height * scale); canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height); if (typeof file !== 'string') URL.revokeObjectURL(url); resolve(canvas.toDataURL('image/jpeg', .7)); }; img.onerror = () => reject(Error('Photo illisible')); img.src = url; }); }
-function readOpts() { return { templateFor: ref => { const t = tplById(ref.tpl || 't2x800') || LIBRARY.find(l => l.id === (ref.tpl || 't2x800')); return t ? Object.assign({}, t, { lay: ref.lay2 ? 2 : undefined }) : null; }, fallback: tplById($('batchTpl').value) }; }
+function compressPhoto(file) { return new Promise((resolve, reject) => { const img = new Image(), url = typeof file === 'string' ? file : URL.createObjectURL(file); img.onload = () => { const canvas = document.createElement('canvas'), scale = Math.min(1, 2200 / img.width, 2900 / img.height); canvas.width = Math.round(img.width * scale); canvas.height = Math.round(img.height * scale); canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height); if (typeof file !== 'string') URL.revokeObjectURL(url); resolve(canvas.toDataURL('image/jpeg', .8)); }; img.onerror = () => reject(Error('Photo illisible')); img.src = url; }); }
+function readOpts() { return { templateFor: ref => { const t = tplById(ref.tpl || 't2x800') || LIBRARY.find(l => l.id === (ref.tpl || 't2x800')); return t ? Object.assign({}, t, { lay: ref.lay2 ? 2 : undefined }) : null; }, fallback: tplById(window.__seanceTpl || $('batchTpl').value) }; }
 async function readSafe(src) {
   let read;
   try { read = await Fiche.read(src, readOpts()); } catch (err) { return { markers: false, ref: null, values: {}, tplId: null, issues: ['Lecture impossible : ' + err.message] }; }
-  // QR d'une ancienne liste (élève réimporté, autre appareil…) : on retrouve l'élève par son nom
-  if (read.ref?.kind === 'student' && !state.students.some(s => s.id === read.ref.id)) {
-    let st = read.ref.name ? matchName(read.ref.name, 0.9) : null;
-    if (!st && read.nameStrip) { try { const txt = await ocrStrip(read.nameStrip); st = matchName(txt, 0.72); } catch (e) { } }
-    if (st) { read.ref = Object.assign({}, read.ref, { id: st.id }); read.issues.unshift('Élève reconnu par son nom imprimé : ' + st.name); }
+  // QR illisible (photo prise de loin, ombre…) : on essaie aussi l'autre mise en page (petites / grandes bulles) et on garde la meilleure lecture
+  if (!read.ref && read.markers && read.tplId) {
+    const fb = readOpts().fallback, alt = fb && Object.assign({}, fb, { lay: fb.lay === 2 ? undefined : 2 });
+    if (alt) { try { const r2 = await Fiche.read(src, Object.assign(readOpts(), { fallback: alt })); const bad = r => r.issues.length + 3 * Object.values(r.values).filter(v => v == null || v === '').length; if (bad(r2) < bad(read)) read = r2; } catch (e) { } }
+  }
+  const studs = cid => state.students.filter(s => !cid || s.classId === cid);
+  // QR d'une ancienne liste (élève réimporté, autre appareil…) ou QR illisible : on retrouve l'élève par son nom imprimé
+  const lost = read.ref?.kind === 'student' && !state.students.some(s => s.id === read.ref.id), noQR = !read.ref && read.markers;
+  if (lost || noQR) {
+    let st = lost && read.ref.name ? matchName(read.ref.name, 0.9) : null;
+    let sure = false;
+    if (!st && read.nameStrip) { try { const txt = await ocrStrip(read.nameStrip); sure = !!matchName(txt, 0.9); st = matchName(txt, noQR ? 0.78 : 0.72); } catch (e) { } }
+    if (st) {
+      if (noQR) { read.ref = { kind: 'student', id: st.id, tpl: read.tplId, byName: true }; read.issues = read.issues.filter(x => !/^QR code/.test(x)); if (!sure) read.issues.unshift('QR illisible : élève reconnu par son nom imprimé (' + st.name + ') — vérifie'); }
+      else { read.ref = Object.assign({}, read.ref, { id: st.id }); read.issues.unshift('Élève reconnu par son nom imprimé : ' + st.name); }
+    }
   }
   delete read.nameStrip;
   return read;
