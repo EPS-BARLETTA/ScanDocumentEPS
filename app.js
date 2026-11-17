@@ -175,9 +175,7 @@ function renderDirectory() {
       '<div class="cards" style="margin-top:8px">' + cls.map(c => {
       const n = state.students.filter(s => s.classId === c.id).length, work = classWork(c.id), gs = grp && grp.folder === f;
       if (gs) return '<div class="cls' + (grp.ids.includes(c.id) ? ' sel' : '') + '" style="cursor:pointer" onclick="grpToggle(\'' + c.id + '\')"><div class="flex"><b class="grow">' + (grp.ids.includes(c.id) ? '✅ ' : '⬜ ') + escapeHtml(c.name) + '</b><span class="pill">' + n + ' élèves</span></div></div>';
-      return '<div class="cls' + (c.id === sel ? ' sel' : '') + '"><div class="flex"><b class="grow">' + escapeHtml(c.name) + '</b><span class="pill">' + n + ' élèves</span></div>' +
-        '<div class="muted" style="margin:6px 0">' + (work.length ? work.map(w => escapeHtml(w.t.name) + ' : ' + w.valid + ' validées · ' + w.read + ' lues / ' + w.total).join('<br>') : 'Aucune fiche pour le moment') + '</div>' +
-        '<button class="mini" onclick="openClass(\'' + c.id + '\')">Ouvrir</button></div>';
+      return '<button class="ctile" onclick="classOpen(\'' + c.id + '\')"><span class="cav">' + escapeHtml(c.name.replace(/[^A-Za-z0-9À-ÿ]/g, '').slice(0, 3).toUpperCase() || '?') + '</span><b>' + escapeHtml(c.name) + '</b><small>' + n + ' élèves' + (work.length ? ' · ' + work.length + ' évaluation' + (work.length > 1 ? 's' : '') : '') + '</small></button>';
     }).join('') + '</div></div>';
   }).join('') || '<p class="muted">Aucune classe pour le moment : crée-en une ou importe un CSV PRONOTE.</p>';
 }
@@ -194,7 +192,7 @@ function renderClassEvals() {
   }).join('') : '<p class="muted">Aucune évaluation pour cette classe. Utilise « Préparer une évaluation ».</p>';
 }
 function goResults(tid, cid) { view('results'); $('resultTpl').value = tid; $('resultClass').value = cid; renderResults(); }
-function openClass(id) { $('classSelect').value = id; render(); $('classDetail').scrollIntoView({ behavior: 'smooth' }); }
+function openClass(id) { classOpen(id); }
 async function moveClass(id) { const c = state.classes.find(x => x.id === id); const f = prompt('Dossier de la classe ' + c.name + ' :', c.folder); if (f && f.trim()) { c.folder = f.trim(); await persist(); render(); } }
 async function renameClass(id) { const c = state.classes.find(x => x.id === id); const n = prompt('Nouveau nom :', c.name); if (n && n.trim()) { c.name = n.trim(); await persist(); render(); } }
 async function renameFolder(f) { const n = prompt('Nouveau nom du dossier :', f); if (!n || !n.trim()) return; state.classes.forEach(c => { if (c.folder === f) c.folder = n.trim(); }); await persist(); render(); }

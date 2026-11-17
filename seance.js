@@ -162,3 +162,39 @@ function renderSeanceHome() {
 }
 const _renderSeanceBase = render;
 render = function () { _renderSeanceBase(); try { const vs = document.querySelector('main section:not(.hidden)'); if (vs && !['seance', 'batch', 'scan'].includes(vs.id)) window.__seanceTpl = null; renderSeance(); renderSeanceHome(); } catch (e) { console.error(e); } };
+
+/* ---------- Mes classes : une tuile par classe, puis la page de la classe ---------- */
+let classView = null, classOpening = false;
+(() => { const st = document.createElement('style'); st.textContent = `
+#directory .cards{grid-template-columns:repeat(auto-fill,minmax(200px,1fr))}
+.ctile{display:flex;flex-direction:column;align-items:center;gap:8px;min-height:170px;justify-content:center;background:#fff;color:#1e1b3a;border:3px solid #ece8fb;border-radius:24px;box-shadow:0 8px 20px rgba(60,40,140,.08);padding:18px 12px;text-align:center}
+.ctile .cav{width:68px;height:68px;border-radius:20px;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:900;color:#fff;background:linear-gradient(135deg,#7c3aed,#ec4899)}
+.ctile:nth-child(4n+2) .cav{background:linear-gradient(135deg,#0ea5e9,#22d3ee)}.ctile:nth-child(4n+3) .cav{background:linear-gradient(135deg,#f97316,#facc15)}.ctile:nth-child(4n) .cav{background:linear-gradient(135deg,#10b981,#84cc16)}
+.ctile b{font-size:20px}.ctile small{color:#6b6890;font-size:14px;font-weight:600}
+.chead{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:6px}.chead h2{margin:0;font-size:32px;flex:1}
+#classDetail.cmode button[onclick^="openEval"]{display:none}
+#classDetail.cmode{border:0;background:none;padding:0;box-shadow:none}
+`; document.head.appendChild(st); })();
+function classOpen(id) { classView = id; classOpening = true; view('classes'); classOpening = false; const sel = $('classSelect'); if (sel) sel.value = id; render(); window.scrollTo({ top: 0 }); }
+function renderClassMode() {
+  const sec = $('classes'); if (!sec || sec.classList.contains('hidden')) return;
+  if (classView && !state.classes.some(c => c.id === classView)) classView = null;
+  const det = $('classDetail'), dir = $('directory'), detail = !!classView;
+  [...sec.children].forEach(el => { if (el.id === 'classDetail' || el.classList.contains('back') || el.classList.contains('pagehead')) return; el.style.display = detail ? 'none' : ''; });
+  sec.querySelector('.pagehead').style.display = detail ? 'none' : '';
+  sec.querySelector('.back').style.display = detail ? 'none' : '';
+  det.classList.toggle('hidden', !detail); det.classList.toggle('cmode', detail);
+  if (!detail) return;
+  const sel = $('classSelect'); if (sel && sel.value !== classView) { sel.value = classView; }
+  const c = state.classes.find(x => x.id === classView), n = state.students.filter(s => s.classId === c.id).length;
+  const h3 = det.querySelector('h3'); if (h3) h3.style.display = 'none';
+  let head = $('classHead'); if (!head) { head = document.createElement('div'); head.id = 'classHead'; det.insertBefore(head, det.firstChild); }
+  head.innerHTML = '<button class="back" onclick="classView=null;render();window.scrollTo({top:0})">← Toutes mes classes</button><div class="chead"><h2>' + escapeHtml(c.name) + ' <small class="muted" style="font-size:18px">' + n + ' élèves</small></h2><button onclick="seanceNew={classId:\'' + c.id + '\',tplId:null};view(\'seance\')">▶ Nouvelle séance</button></div>';
+  // liste des élèves repliée
+  const ro = $('roster'); if (ro && !ro.closest('details.rosterbox')) { const d = document.createElement('details'); d.className = 'rosterbox'; d.innerHTML = '<summary style="font-size:18px;font-weight:800;cursor:pointer;padding:8px 0">👥 Liste des élèves (' + n + ')</summary>'; ro.parentNode.insertBefore(d, ro); d.appendChild(ro); const h4 = d.previousElementSibling; if (h4 && h4.tagName === 'H4') h4.remove(); }
+  else if (ro) { const sm = ro.closest('details.rosterbox').querySelector('summary'); sm.textContent = '👥 Liste des élèves (' + n + ')'; }
+}
+const _renderClassBase = render;
+render = function () { _renderClassBase(); try { renderClassMode(); } catch (e) { console.error(e); } };
+const _viewClassBase = view;
+view = function (id) { if (id === 'classes' && !classOpening) classView = null; return _viewClassBase(id); };
