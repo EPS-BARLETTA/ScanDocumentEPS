@@ -201,6 +201,8 @@ function controlAlerts(t, s, r, pft) {
     const a = n['ann' + bi], f = r.values[er.id];
     if (a && sec(a) !== sec(f)) out.push({ kind: 'est', key: 'est' + bi + ':' + a + '/' + (f || ''), rowId: er.id, val: a, cur: f || '', text: (b.title || 'Course') + ' : estimation annoncée ' + a + (f ? ', mais ' + f + ' sur la fiche' : ', rien sur la fiche') });
   });
+  // fractions incohérentes (souvent un temps de passage mal noté ou mal lu)
+  timedBlocks(t).forEach(({ b, bi }) => { const sg = (m.blocks[bi].segs || []).filter(x => x != null); if (sg.length >= 2 && Math.min(...sg) > 0 && Math.max(...sg) > 1.8 * Math.min(...sg)) out.push({ kind: 'seg', key: 'seg' + bi + ':' + sg.join('/'), cur: '', text: (b.title ? b.title.split(' · ')[0] + ' : ' : '') + 'fractions très différentes (' + sg.map(fmt).join(' puis ') + ') — vérifie les temps de passage' }); });
   pft = pft === undefined ? pfTimes(t) : pft;
   const pf = pft && pft.by[s.id];
   if (pf) timedBlocks(t).forEach(({ b, bi }, k) => {
@@ -224,7 +226,7 @@ async function ctrlAnswer(rid, key, take) {
 }
 function ctrlButtons(r, a) {
   const go = take => 'onclick="ctrlAnswer(\'' + r.id + '\',\'' + escapeHtml(a.key) + '\',' + take + ')"';
-  const mine = a.kind === 'pf' ? (a.cur ? '✓ Valider le chrono élève<small>' + escapeHtml(a.cur) + '</small>' : '✓ Valider quand même<small>sans temps PhotoFinish</small>') : '✓ Valider la fiche<small>' + escapeHtml(a.cur || 'vide') + '</small>';
+  const mine = a.kind === 'seg' ? '✓ Les temps sont justes<small>valider</small>' : a.kind === 'pf' ? (a.cur ? '✓ Valider le chrono élève<small>' + escapeHtml(a.cur) + '</small>' : '✓ Valider quand même<small>sans temps PhotoFinish</small>') : '✓ Valider la fiche<small>' + escapeHtml(a.cur || 'vide') + '</small>';
   return '<div class="cbtns"><button class="cb-me" ' + go(false) + '>' + mine + '</button>' + (a.rowId && a.val ? '<button class="cb-' + a.kind + '" ' + go(true) + '>' + (a.kind === 'pf' ? '⏱ Valider PhotoFinish' : '📝 Valider l’annoncée') + '<small>' + escapeHtml(a.val) + '</small></button>' : '') + '</div>';
 }
 const _scanStateBase = scanState;
