@@ -352,3 +352,14 @@ function applyResFilter() {
 }
 const _renderResultsFilter = renderResults;
 renderResults = function () { _renderResultsFilter(); try { applyResFilter(); } catch (e) { console.error(e); } };
+
+/* ---------- Liste de classe pour PhotoFinish (mêmes noms → comparaison automatique) ---------- */
+function pfExportClass(cid) {
+  const c = state.classes.find(x => x.id === cid); if (!c) return;
+  const studs = state.students.filter(s => s.classId === cid).sort((a, b) => a.name.localeCompare(b.name, 'fr'));
+  if (!studs.length) return alert('Cette classe n’a pas d’élève.');
+  const q = v => /[;"\n]/.test(v) ? '"' + String(v).replace(/"/g, '""') + '"' : v;
+  const csv = '﻿Nom;Classe\n' + studs.map(s => q(s.name) + ';' + q(s.cls || c.name)).join('\n') + '\n';
+  download('photofinish-' + slug(c.name) + '.csv', csv, 'text/csv;charset=utf-8');
+  alert('Liste « ' + c.name + ' » téléchargée (' + studs.length + ' élèves).\n\nDans PhotoFinish : Importer CSV → choisis ce fichier.\nLes noms seront exactement ceux de ScanDocument : la comparaison des temps se fera toute seule.');
+}
