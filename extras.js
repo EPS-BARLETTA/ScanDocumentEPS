@@ -30,7 +30,7 @@ const sgn = v => (v > 0 ? '+' : v < 0 ? '−' : '') + String(Math.abs(Math.round
 #rafale .rbtn{background:#fff;color:#111;border:0;border-radius:14px;padding:14px 18px;font-size:18px;font-weight:800;min-height:56px}
 #rafale .rauto{background:#22c55e;color:#fff}#rafale .rauto.off{background:#555}
 .ctrlbox{margin:14px 0}.ctrl-alert{background:#fee2e2;border:3px solid #ef4444;border-radius:18px;padding:14px 16px;margin:10px 0;color:#7f1d1d}
-.ctrl-alert ul{list-style:none;padding:0;margin:0}.ctrl-alert>ul>li{background:#fff;border-radius:14px;padding:10px 14px;margin:10px 0}.citem{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:6px 0}.citem>span{flex:1;min-width:240px;font-size:17px}.cbtns{display:flex;gap:10px}.cbtns button{min-height:60px;font-size:17px;font-weight:800;border-radius:14px;padding:8px 16px;line-height:1.15;color:#fff;box-shadow:0 4px 10px rgba(0,0,0,.12)}.cbtns small{display:block;font-size:20px;font-weight:900;margin-top:2px}.cb-me{background:linear-gradient(135deg,#16a34a,#22c55e)}.cb-pf{background:linear-gradient(135deg,#2563eb,#3b82f6)}.cb-est{background:linear-gradient(135deg,#7c3aed,#a78bfa)}.ctrl-alert h3{margin:0 0 6px;font-size:20px;color:#b91c1c}.ctrl-alert li{margin:4px 0;font-size:16px}.ctrl-ok{background:#dcfce7;border:2px solid #22c55e;border-radius:16px;padding:12px 16px;color:#14532d;font-weight:700}
+.cbulk{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:6px 0 4px}.cbulk span{font-weight:800}.cbulk button{min-height:50px;font-size:15px;font-weight:800;border-radius:12px;padding:8px 14px;color:#fff}.ctrl-alert ul{list-style:none;padding:0;margin:0}.ctrl-alert>ul>li{background:#fff;border-radius:14px;padding:10px 14px;margin:10px 0}.citem{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:6px 0}.citem>span{flex:1;min-width:240px;font-size:17px}.cbtns{display:flex;gap:10px}.cbtns button{min-height:60px;font-size:17px;font-weight:800;border-radius:14px;padding:8px 16px;line-height:1.15;color:#fff;box-shadow:0 4px 10px rgba(0,0,0,.12)}.cbtns small{display:block;font-size:20px;font-weight:900;margin-top:2px}.cb-me{background:linear-gradient(135deg,#16a34a,#22c55e)}.cb-pf{background:linear-gradient(135deg,#2563eb,#3b82f6)}.cb-est{background:linear-gradient(135deg,#7c3aed,#a78bfa)}.ctrl-alert h3{margin:0 0 6px;font-size:20px;color:#b91c1c}.ctrl-alert li{margin:4px 0;font-size:16px}.ctrl-ok{background:#dcfce7;border:2px solid #22c55e;border-radius:16px;padding:12px 16px;color:#14532d;font-weight:700}
 .pfbox{background:#f6f3ff;border-radius:18px;padding:14px 16px;margin:12px 0}.pfbox table{width:100%;border-collapse:collapse}.pfbox td,.pfbox th{padding:6px 8px;border-bottom:1px solid #e5e0f5;text-align:left;font-size:14px}
 #annBox{position:fixed;inset:0;z-index:9000;background:rgba(20,15,50,.55);display:flex;align-items:flex-start;justify-content:center;overflow:auto;padding:20px}
 #annBox .card{background:#fff;border-radius:22px;max-width:760px;width:100%;padding:20px;box-shadow:0 20px 50px rgba(0,0,0,.3)}
@@ -52,7 +52,8 @@ async function rafaleOpen() {
     '<div class="rbot"><button class="shutter" aria-label="Photographier" onclick="rafaleShoot(true)"></button><div class="rlog" id="rLog"></div><button class="rbtn rauto" id="rAuto" onclick="rafaleAuto()">Auto ✓</button></div>';
   document.body.appendChild(ov);
   const v = ov.querySelector('video'); v.srcObject = stream; try { await v.play(); } catch (e) { }
-  raf = { stream, v, ov, classId, auto: true, armed: true, stable: 0, prev: null, lost: 0, pending: [], working: false, ok: 0, check: 0, log: [], tpl: null, shooting: false };
+  beep.ctx = beep.ctx || (() => { try { return new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { return null; } })();
+  raf = { seen: new Set(), stream, v, ov, classId, auto: true, armed: true, stable: 0, prev: null, lost: 0, pending: [], working: false, ok: 0, check: 0, log: [], tpl: null, shooting: false };
   raf.timer = setInterval(rafaleTick, 380);
 }
 function rafaleAuto() { raf.auto = !raf.auto; const b = $('rAuto'); b.classList.toggle('off', !raf.auto); b.textContent = raf.auto ? 'Auto ✓' : 'Auto ✗'; }
@@ -83,6 +84,11 @@ function rafaleShoot(manual) {
   raf.armed = false; raf.stable = 0;
   c.toBlob(b => { raf.shooting = false; if (!b) return; raf.pending.push(b); rafLog('⏳ Lecture…', '#fde68a'); rafaleWork(); }, 'image/jpeg', 0.92);
 }
+function beep(ok) {
+  try { const A = beep.ctx || (beep.ctx = new (window.AudioContext || window.webkitAudioContext)()), t = A.currentTime;
+    (ok ? [[880, 0, .12]] : [[330, 0, .14], [330, .2, .14]]).forEach(([f, d, l]) => { const o = A.createOscillator(), g = A.createGain(); o.frequency.value = f; g.gain.setValueAtTime(.25, t + d); g.gain.exponentialRampToValueAtTime(.001, t + d + l); o.connect(g); g.connect(A.destination); o.start(t + d); o.stop(t + d + l + .02); });
+  } catch (e) { }
+}
 function rafLog(t, color) { raf.log.unshift({ t, color }); raf.log = raf.log.slice(0, 3); const e = $('rLog'); if (e) e.innerHTML = raf.log.map(l => '<span style="color:' + l.color + '">' + escapeHtml(l.t) + '</span>').join(''); }
 async function rafaleWork() {
   if (!raf || raf.working) return; raf.working = true;
@@ -91,9 +97,11 @@ async function rafaleWork() {
     const read = await readSafe(b), photo = await compressPhoto(b), ok = addFromRead(read, photo, r.classId);
     await persist();
     if (read.tplId) r.tpl = read.tplId;
-    const st = ok ? state.students.find(x => x.id === read.ref?.id) : null;
-    if (ok) r.ok++; else r.check++;
-    r.log.shift(); rafLog(ok ? '✓ ' + (st ? st.name : 'fiche rangée') : '⚠ fiche à vérifier (' + (read.issues[0] || 'non lue') + ')', ok ? '#86efac' : '#fca5a5');
+    const st = ok ? state.students.find(x => x.id === read.ref?.id) : null, again = st && r.seen.has(st.id);
+    if (st) r.seen.add(st.id);
+    if (ok && !again) r.ok++; else if (!ok) r.check++;
+    r.log.shift(); rafLog(again ? '↺ déjà photographiée : ' + st.name : ok ? '✓ ' + (st ? st.name : 'fiche rangée') : '⚠ fiche à vérifier (' + (read.issues[0] || 'non lue') + ')', again ? '#cbd5e1' : ok ? '#86efac' : '#fca5a5');
+    if (!again) beep(ok);
     const tot = state.students.filter(x => x.classId === r.classId).length, done = r.tpl ? state.students.filter(x => x.classId === r.classId && latestScan(x.id, r.tpl)).length : r.ok;
     const ce = $('rCount'); if (ce) ce.textContent = done + ' / ' + tot + (r.check ? ' · ⚠ ' + r.check : '');
   }
@@ -109,22 +117,29 @@ async function rafaleClose() {
 
 /* ---------- 2. Estimations annoncées avant la course ---------- */
 let ann = null;
+function annTpls() { return state.templates.filter(t => estBlocks(t).length && state.classes.some(c => classUsesTpl(c.id, t))); }
+function classUsesTpl(cid, t) { return (t.printedFor || []).some(p => p.classId === cid) || state.scans.some(x => x.templateId === t.id && x.classId === cid); }
 function annOpen(tid, cid) {
-  tid = tid || ($('resultTpl') && $('resultTpl').value) || state.templates[0]?.id; cid = cid || ($('resultClass') && $('resultClass').value) || $('batchClass').value;
-  const t = tplById(tid); if (!t || !estBlocks(t).length) return alert('Cette fiche n’a pas de ligne « Estimation ».');
-  ann = { tid, cid, bi: estBlocks(t)[0].bi }; annRender();
+  const T = annTpls();
+  tid = tid || ($('resultTpl') && !$('results').classList.contains('hidden') && $('resultTpl').value) || (T[T.length - 1] || {}).id;
+  const t = tplById(tid); if (!t || !estBlocks(t).length) return alert('Prépare d’abord une évaluation (fiche avec une ligne « Estimation ») et imprime-la pour ta classe.');
+  const cls = state.classes.filter(c => classUsesTpl(c.id, t));
+  cid = cid || ($('resultClass') && !$('results').classList.contains('hidden') && $('resultClass').value !== '*' ? $('resultClass').value : null) || (cls[0] || state.classes[0] || {}).id;
+  ann = { tid: t.id, cid, bi: estBlocks(t)[0].bi }; annRender();
 }
 function annRender() {
   let box = $('annBox'); if (!ann) { if (box) box.remove(); return; }
   if (!box) { box = document.createElement('div'); box.id = 'annBox'; document.body.appendChild(box); }
-  const t = tplById(ann.tid), studs = resultStudents(ann.cid, t), k = 'ann' + ann.bi;
+  const t = tplById(ann.tid), k = 'ann' + ann.bi, cls = state.classes.filter(c => classUsesTpl(c.id, t));
+  const studs = state.students.filter(s => s.classId === ann.cid).sort((a, b) => a.name.localeCompare(b.name, 'fr'));
   const n = studs.filter(s => ((s.notes || {})[t.id] || {})[k]).length;
-  box.innerHTML = '<div class="card"><div class="flex"><h2 class="grow" style="margin:0">📝 Estimations annoncées</h2><button onclick="ann=null;annRender();render()">Fermer ✓</button></div>' +
-    '<p class="muted">Avant la course, note le temps annoncé par chaque élève. Après le scan, si la fiche ne dit pas la même chose, une <b style="color:#b91c1c">alerte rouge</b> s’affiche dans les résultats. Tape simplement « 320 » pour 3:20.</p>' +
-    '<div class="flex"><select onchange="ann.tid=this.value;ann.bi=estBlocks(tplById(this.value))[0]?.bi;annRender()">' + state.templates.filter(x => estBlocks(x).length).map(x => '<option value="' + x.id + '"' + (x.id === t.id ? ' selected' : '') + '>' + escapeHtml(x.name) + '</option>').join('') + '</select>' +
-    '<span class="seg">' + estBlocks(t).map(x => '<button class="' + (x.bi === ann.bi ? 'on' : '') + '" onclick="ann.bi=' + x.bi + ';annRender()">' + escapeHtml(x.b.title || 'Course') + '</button>').join('') + '</span></div>' +
-    '<p><b>' + n + ' / ' + studs.length + '</b> estimations notées pour ' + escapeHtml(t.blocks[ann.bi].title || 'cette course') + '.</p>' +
-    studs.map(s => { const v = ((s.notes || {})[t.id] || {})[k] || ''; return '<div class="row"><span>' + escapeHtml(s.name) + (s.cls ? ' <small class="muted">' + escapeHtml(s.cls) + '</small>' : '') + '</span><input inputmode="numeric" enterkeyhint="next" value="' + escapeHtml(v) + '" class="' + (v ? 'done' : '') + '" placeholder="m:ss" onchange="annSet(\'' + s.id + '\',this)" onkeydown="if(event.key===\'Enter\'){const n=this.closest(\'.row\').nextElementSibling;if(n)n.querySelector(\'input\').focus();}"></div>'; }).join('') + '</div>';
+  box.innerHTML = '<div class="card"><div class="flex"><h2 class="grow" style="margin:0">📝 Estimations annoncées</h2><button onclick="ann=null;annRender();if(!$(\'results\').classList.contains(\'hidden\'))render()">Fermer ✓</button></div>' +
+    '<p class="muted">Avant chaque course, note le temps annoncé par chaque élève. Tape « 320 » pour 3:20, puis Entrée pour passer au suivant. Si la fiche dit autre chose après la course, une <b style="color:#b91c1c">alerte rouge</b> apparaîtra dans les résultats.</p>' +
+    '<div class="flex"><select onchange="ann.tid=this.value;ann.bi=estBlocks(tplById(this.value))[0].bi;annRender()">' + annTpls().map(x => '<option value="' + x.id + '"' + (x.id === t.id ? ' selected' : '') + '>' + escapeHtml(x.name) + '</option>').join('') + '</select>' +
+    (cls.length > 1 ? '<select onchange="ann.cid=this.value;annRender()">' + cls.map(c => '<option value="' + c.id + '"' + (c.id === ann.cid ? ' selected' : '') + '>' + escapeHtml(c.name) + '</option>').join('') + '</select>' : '<b>' + escapeHtml(className(ann.cid)) + '</b>') + '</div>' +
+    '<div class="seg" style="margin:12px 0">' + estBlocks(t).map(x => '<button style="min-height:52px;font-size:18px;padding:8px 20px" class="' + (x.bi === ann.bi ? 'on' : '') + '" onclick="ann.bi=' + x.bi + ';annRender()">' + escapeHtml(x.b.title || 'Course') + '</button>').join('') + '</div>' +
+    '<p style="font-size:18px"><b id="annCount">' + n + '</b> / ' + studs.length + ' estimations notées pour ' + escapeHtml(t.blocks[ann.bi].title || 'cette course') + '.</p>' +
+    studs.map(s => { const no = (s.notes || {})[t.id] || {}, v = no[k] || ''; if (no.disp) return '<div class="row" style="opacity:.45"><span>' + escapeHtml(s.name) + '</span><i>dispensé</i></div>'; return '<div class="row"><span>' + escapeHtml(s.name) + (s.cls ? ' <small class="muted">' + escapeHtml(s.cls) + '</small>' : '') + '</span><input inputmode="numeric" enterkeyhint="next" value="' + escapeHtml(v) + '" class="' + (v ? 'done' : '') + '" placeholder="m:ss" onchange="annSet(\'' + s.id + '\',this)" onkeydown="if(event.key===\'Enter\'){event.preventDefault();this.blur();let n=this.closest(\'.row\').nextElementSibling;while(n&&!n.querySelector(\'input\'))n=n.nextElementSibling;if(n)n.querySelector(\'input\').focus();}"></div>'; }).join('') + '</div>';
 }
 async function annSet(sid, el) {
   const v = parseQuickTime(el.value); if (v === null) { el.classList.add('bad'); return; }
@@ -132,6 +147,7 @@ async function annSet(sid, el) {
   const s = state.students.find(x => x.id === sid); if (!s) return; s.notes = s.notes || {}; s.notes[ann.tid] = s.notes[ann.tid] || {};
   if (v) s.notes[ann.tid]['ann' + ann.bi] = v; else delete s.notes[ann.tid]['ann' + ann.bi];
   await persist();
+  const t = tplById(ann.tid), k = 'ann' + ann.bi, c = $('annCount'); if (c) c.textContent = state.students.filter(x => x.classId === ann.cid && ((x.notes || {})[t.id] || {})[k]).length;
 }
 
 /* ---------- 3. PhotoFinish ---------- */
@@ -216,6 +232,23 @@ scanState = function (r) {
   if (st === 'auto') { const t = tplById(r.templateId), s = state.students.find(x => x.id === r.studentId); if (controlAlerts(t, s, r).length) return 'check'; }
   return st;
 };
+let ctrlAll = false;
+async function ctrlBulk(mode) {
+  const t = tplById($('resultTpl').value), c = $('resultClass').value, pft = pfTimes(t);
+  const list = resultStudents(c, t).map(s => ({ s, r: latestScan(s.id, t.id) })).filter(x => x.r);
+  const lbl = mode === 'pf' ? 'prendre le temps PhotoFinish pour tous les écarts de temps' : mode === 'est' ? 'prendre l’estimation annoncée pour toutes les estimations modifiées' : 'garder le temps écrit sur toutes les fiches (toutes les alertes)';
+  if (!confirm('Pour toute la classe : ' + lbl + ' ?')) return;
+  let n = 0;
+  for (const { s, r } of list) for (const a of controlAlerts(t, s, r, pft)) {
+    const take = (mode === 'pf' && a.kind === 'pf') || (mode === 'est' && a.kind === 'est');
+    if (mode && !take) continue;
+    if (take && a.rowId) { r.values = Object.assign({}, r.values, { [a.rowId]: a.val }); r.issues = (r.issues || []).concat('Corrigé : ' + a.text.split(' : ')[0] + ' → ' + a.val + (a.kind === 'pf' ? ' (PhotoFinish)' : ' (annoncée)')); }
+    r.ack = Object.assign({}, r.ack, { [a.key]: true }); n++;
+    if (!controlAlerts(t, s, r, pft).length) r.status = 'validated';
+    r.updated = new Date().toISOString();
+  }
+  await persist(); renderResults();
+}
 function renderControls() {
   let box = $('ctrlBox'); const t = tplById($('resultTpl').value);
   if (!box) { box = document.createElement('div'); box.id = 'ctrlBox'; box.className = 'ctrlbox'; const tw = document.querySelector('#results .tablewrap'); tw.parentNode.insertBefore(box, tw); }
@@ -236,7 +269,9 @@ function renderControls() {
       (pft.unknown.length ? '<p class="notice">Noms PhotoFinish non reconnus : ' + pft.unknown.map(escapeHtml).join(', ') + '</p>' : '') +
       (missPF.length ? '<p class="muted">Sans temps PhotoFinish : ' + missPF.map(s => escapeHtml(s.name)).join(', ') + '</p>' : '') + '</details>';
   }
-  if (alerts.length) h += '<div class="ctrl-alert"><h3>🚨 ' + alerts.length + ' élève(s) à contrôler</h3><ul>' + alerts.map(x => '<li><b>' + escapeHtml(x.s.name) + '</b> — ' + x.a.map(a => '<div class="citem"><span>' + escapeHtml(a.text) + '</span>' + ctrlButtons(x.r, a) + '</div>').join('') + '<button class="linkbtn" onclick="editScan(\'' + x.r.id + '\')">Voir la photo de la fiche</button></li>').join('') + '</ul></div>';
+  const nA = alerts.reduce((n, x) => n + x.a.length, 0), many = alerts.length > 4 && !ctrlAll, shown = many ? alerts.slice(0, 4) : alerts;
+  if (alerts.length) h += '<div class="ctrl-alert"><h3>🚨 ' + alerts.length + ' élève(s) à contrôler</h3>' +
+    '<div class="cbulk"><span>Tout d’un coup :</span><button class="cb-me" onclick="ctrlBulk(false)">✓ Garder tous les temps des fiches</button>' + (alerts.some(x => x.a.some(a => a.kind === 'pf' && a.rowId)) ? '<button class="cb-pf" onclick="ctrlBulk(\'pf\')">⏱ Tout prendre de PhotoFinish</button>' : '') + (alerts.some(x => x.a.some(a => a.kind === 'est')) ? '<button class="cb-est" onclick="ctrlBulk(\'est\')">📝 Toutes les estimations annoncées</button>' : '') + '</div><ul>' + shown.map(x => '<li><b>' + escapeHtml(x.s.name) + '</b>' + x.a.map(a => '<div class="citem"><span>' + escapeHtml(a.text) + '</span>' + ctrlButtons(x.r, a) + '</div>').join('') + '<button class="linkbtn" onclick="editScan(\'' + x.r.id + '\')">Voir la photo de la fiche</button></li>').join('') + '</ul>' + (many ? '<button class="secondary" onclick="ctrlAll=true;renderControls()">Voir les ' + (alerts.length - 4) + ' autres élèves</button>' : '') + '</div>';
   else if (hasAnn || (P && P.files.length)) h += '<p class="ctrl-ok">✓ Aucune différence avec ' + [hasAnn ? 'les estimations annoncées' : '', P && P.files.length ? 'PhotoFinish (± ' + nf(pft.tol) + ' s)' : ''].filter(Boolean).join(' ni avec ') + '.</p>';
   box.innerHTML = h;
 }

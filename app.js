@@ -474,7 +474,7 @@ function openEval(ctx) {
   $('evNoClass').classList.toggle('hidden', !!state.classes.length);
   $('evClassBox').classList.toggle('hidden', !!st); $('evStudentBox').classList.toggle('hidden', !st); $('evZipBtn').classList.toggle('hidden', !!st);
   if (st) $('evStudentBox').textContent = 'Fiche de ' + st.name + ' (' + className(st.classId) + ')';
-  const pre = evCtx.classId;
+  const pre = evCtx.classId || (state.classes.length === 1 ? state.classes[0].id : null);
   $('evClasses').innerHTML = folders().map(f => '<h4>📁 ' + escapeHtml(f) + '</h4>' + state.classes.filter(c => c.folder === f).sort((a, b) => a.name.localeCompare(b.name, 'fr', { numeric: true })).map(c => '<label><input type="checkbox" value="' + c.id + '"' + (c.id === pre ? ' checked' : '') + ' onchange="evInfo()"> ' + escapeHtml(c.name) + ' <span class="muted">(' + state.students.filter(s => s.classId === c.id).length + ' élèves)</span></label>').join('')).join('') || '<p class="muted">Aucune classe.</p>';
   evInfo();
 }
