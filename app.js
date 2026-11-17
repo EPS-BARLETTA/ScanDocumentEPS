@@ -108,8 +108,8 @@ function migrate() {
   for (const lib of LIBRARY) if (!tplById(lib.id) && (!state.removedLib.includes(lib.id) || state.scans.some(s => s.races || s.templateId === lib.id))) state.templates.push(Object.assign(JSON.parse(JSON.stringify(lib)), { createdAt: today() }));
   for (const c of state.classes) c.folder = c.folder || schoolYear();
   for (const t of state.templates) { t.printedFor = t.printedFor || []; t.createdAt = t.createdAt || today();
-    // jamais imprimée ni lue : passe aux grandes bulles (les fiches déjà imprimées gardent leur mise en page)
-    if (t.lay !== 2 && !t.printedFor.length && !t.locked && !state.scans.some(x => x.templateId === t.id) && !state.queue.some(q => q.tplId === t.id)) t.lay = 2; if (t.id === 't2x800' && !('bareme' in t)) t.bareme = 'ca1-2x800'; if (t.id === 't2x800' && t.name === 'Demi-fond 2 × 800 m') t.name = LIBRARY[0].name; }
+    // grandes bulles pour toutes les prochaines impressions : le QR indique la version, donc les fiches déjà imprimées restent lues comme avant
+    if (t.lay !== 2) t.lay = 2; if (t.id === 't2x800' && !('bareme' in t)) t.bareme = 'ca1-2x800'; if (t.id === 't2x800' && t.name === 'Demi-fond 2 × 800 m') t.name = LIBRARY[0].name; }
   state.baremes = (state.baremes || []).map(migrateV1);
   for (const s of state.scans) {
     if (s.races && !s.values) {
