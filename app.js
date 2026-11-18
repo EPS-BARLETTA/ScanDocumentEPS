@@ -145,7 +145,7 @@ function render() {
   fillSelect('resultClass', [['*', '— Toutes les classes —'], ...cls], false); if (!$('resultClass').value) $('resultClass').value = cls[0]?.[0] || '*';
   ['batchTpl', 'resultTpl', 'scanTpl'].forEach(id => fillSelect(id, tpls, true));
   renderDirectory();
-  $('roster').innerHTML = state.students.filter(s => s.classId === currentClass()).sort((a, b) => a.name.localeCompare(b.name, 'fr')).map(s => '<div class="rowcard flex"><span class="grow">' + escapeHtml(s.name) + clsTag(s) + '</span><select onchange="setNote(\'' + s.id + '\',null,\'sex\',this.value);render()"><option value="">Fille / Garçon ?</option><option value="F"' + (s.sex === 'F' ? ' selected' : '') + '>Fille</option><option value="G"' + (s.sex === 'G' ? ' selected' : '') + '>Garçon</option></select><button class="secondary" onclick="openEval({studentId:\'' + s.id + '\'})">🖨 Réimprimer sa fiche</button><button class="secondary" onclick="removeStudent(\'' + s.id + '\')">Retirer</button></div>').join('');
+  $('roster').innerHTML = state.students.filter(s => s.classId === currentClass()).sort((a, b) => a.name.localeCompare(b.name, 'fr')).map(s => '<div class="rowcard flex"><span class="grow">' + portraitStudentName(s) + clsTag(s) + '</span><select onchange="setNote(\'' + s.id + '\',null,\'sex\',this.value);render()"><option value="">Fille / Garçon ?</option><option value="F"' + (s.sex === 'F' ? ' selected' : '') + '>Fille</option><option value="G"' + (s.sex === 'G' ? ' selected' : '') + '>Garçon</option></select><button class="secondary" onclick="openEval({studentId:\'' + s.id + '\'})">🖨 Réimprimer sa fiche</button><button class="secondary" onclick="removeStudent(\'' + s.id + '\')">Retirer</button></div>').join('');
   const previous = $('scanStudent').value;
   $('scanStudent').innerHTML = '<option value="">— Élève non identifié —</option>' + state.students.filter(s => s.classId === $('scanClass').value).sort((a, b) => a.name.localeCompare(b.name, 'fr')).map(s => '<option value="' + s.id + '">' + escapeHtml(s.name) + '</option>').join('');
   $('scanStudent').value = state.students.some(s => s.id === previous && s.classId === $('scanClass').value) ? previous : '';
@@ -800,7 +800,7 @@ function renderResults() {
     const all = state.scans.filter(x => x.studentId === s.id && x.templateId === t.id), r = latestScan(s.id, t.id), m = r ? metrics(t, r.values) : null, st = scanState(r);
     if (st === 'validated') validated++; else if (st === 'auto') autoOk++; else if (r) pending++;
     if (B) return B.v2 ? v2Row(t, s, r, m, st, true, c === '*') : gradeRow(t, s, r, m, st, true, c === '*');
-    return '<tr><td>' + (c === '*' ? '<span class="muted">' + escapeHtml(className(s.classId)) + '</span> ' : '') + escapeHtml(s.name) + (all.length > 1 ? ' (' + all.length + ' fiches)' : '') + '</td>' + cols.map(x => '<td>' + (m ? escapeHtml(x.get(m, r.values, x.bi)) : '—') + '</td>').join('') + '<td><span class="pill ' + ({ validated: 'ok', auto: 'auto', check: 'warn' }[st] || '') + '">' + ({ validated: 'Validé', auto: 'Lu ✓ à valider', check: 'À vérifier ⚠' }[st] || 'Non scanné') + '</span></td><td>' + (r ? '<button class="secondary" onclick="editScan(\'' + r.id + '\')">Ouvrir</button>' : '—') + '</td></tr>';
+    return '<tr><td>' + (c === '*' ? '<span class="muted">' + escapeHtml(className(s.classId)) + '</span> ' : '') + portraitStudentName(s) + (all.length > 1 ? ' (' + all.length + ' fiches)' : '') + '</td>' + cols.map(x => '<td>' + (m ? escapeHtml(x.get(m, r.values, x.bi)) : '—') + '</td>').join('') + '<td><span class="pill ' + ({ validated: 'ok', auto: 'auto', check: 'warn' }[st] || '') + '">' + ({ validated: 'Validé', auto: 'Lu ✓ à valider', check: 'À vérifier ⚠' }[st] || 'Non scanné') + '</span></td><td>' + (r ? '<button class="secondary" onclick="editScan(\'' + r.id + '\')">Ouvrir</button>' : '—') + '</td></tr>';
   }).join('');
   const nd = B ? students.filter(s => ((s.notes || {})[t.id] || {}).disp).length : 0, ndNo = B ? students.filter(s => ((s.notes || {})[t.id] || {}).disp && !latestScan(s.id, t.id)).length : 0;
   $('progress').textContent = (nd ? nd + ' dispensé(s) · ' : '') + students.length + ' élèves · ' + validated + ' validés · ' + autoOk + ' lus sans alerte · ' + pending + ' à vérifier · ' + (students.length - validated - pending - autoOk - ndNo) + ' non scannés';
@@ -822,7 +822,7 @@ function gradeRow(t, s, r, m, st, screen, showClass) {
   const lab = { validated: 'Validé', auto: 'Lu, à valider', check: 'À vérifier' }, pill = { validated: 'ok', auto: 'auto', check: 'warn' };
   const finals = m ? m.blocks.filter(b => b.hasTime).map(b => fmt(b.final)).join(' · ') : '';
   const dispBtn = screen ? ' <button class="mini' + (g.disp ? ' on' : '') + '" style="' + (g.disp ? 'background:#6b7a8c;color:#fff' : '') + '" onclick="setNote(\'' + s.id + '\',\'' + t.id + '\',\'disp\',1)">' + (g.disp ? 'Dispensé ✓' : 'Dispensé ?') + '</button>' : '';
-  const name = '<td class="nm"><b>' + escapeHtml(s.name) + '</b>' + clsTag(s) + (showClass ? ' <span class="of">' + escapeHtml(className(s.classId)) + '</span>' : '') + '<span class="sub">' + (finals ? 'Temps : ' + finals : 'non scanné') + '</span>' +
+  const name = '<td class="nm"><b>' + (screen ? portraitStudentName(s) : escapeHtml(s.name)) + '</b>' + clsTag(s) + (showClass ? ' <span class="of">' + escapeHtml(className(s.classId)) + '</span>' : '') + '<span class="sub">' + (finals ? 'Temps : ' + finals : 'non scanné') + '</span>' +
     (screen ? '<span class="sub"><span class="pill ' + (pill[st] || '') + '">' + (lab[st] || 'Non scanné') + '</span>' + (r ? ' <button class="mini" onclick="editScan(\'' + r.id + '\')">Ouvrir</button>' : '') + dispBtn + '</span>' : '') + '</td>';
   if (g.disp) return '<tr class="disp"' + '>' + name + '<td colspan="12" style="background:#eef1f5;color:#5a6f85;font-size:18px;font-weight:700">Dispensé(e)</td></tr>';
   const tot = (v, max) => '<span class="big">' + nf(v) + '</span>' + (max ? '<span class="of"> /' + max + '</span>' : '');
@@ -924,14 +924,20 @@ function exportSantorin(tid, cid) {
 }
 
 /* ---------- Sauvegarde ---------- */
-function backup() { download('sauvegarde-scan-eps-' + today() + '.json', JSON.stringify({ version: 2, ...state }), 'application/json'); }
+function backup() { download('sauvegarde-scan-eps-' + today() + '.json', JSON.stringify({ version: 2, ...state }, (key, value) => key === 'portrait' ? undefined : value), 'application/json'); }
 async function restore(e) {
   const f = e.target.files[0]; if (!f) return;
   try {
     const d = JSON.parse(await f.text());
     if (!Array.isArray(d.classes) || !Array.isArray(d.students) || !Array.isArray(d.scans)) throw Error('Format invalide');
     if (!confirm('Remplacer les données locales actuelles par cette sauvegarde ?')) return;
-    state = { classes: d.classes, students: d.students, scans: d.scans, queue: d.queue || [], templates: d.templates || [] };
+    const portraits = new Map(state.students.filter(s => validRosterPortrait(s.portrait)).map(s => [s.id, s.portrait]));
+    const students = d.students.map(s => {
+      const {portrait, ...student} = s;
+      if (portraits.has(student.id)) student.portrait = portraits.get(student.id);
+      return student;
+    });
+    state = { classes: d.classes, students, scans: d.scans, queue: d.queue || [], templates: d.templates || [] };
     migrate(); await persist(); render(); alert('Sauvegarde restaurée');
   } catch (err) { alert('Restauration impossible : ' + err.message); }
   e.target.value = '';
