@@ -212,6 +212,9 @@ function portraitStudentName(student) {
 document.addEventListener('DOMContentLoaded', () => {
   let portraitTiles = [];
   let portraitBusy = false;
+  const savedStudents = new Set();
+  const portraitSummary = $('portraitSummary');
+  const saveButton = $('savePortraits');
   const portraitDialog = $('portraitDialog');
   const portraitStatus = $('portraitStatus');
   const portraitTarget = $('portraitTarget');
@@ -232,6 +235,9 @@ document.addEventListener('DOMContentLoaded', () => {
     $('portraitFile').value = '';
     portraitTiles = [];
     portraitStatus.textContent = '';
+    portraitSummary.textContent = '';
+    savedStudents.clear();
+    portraitTarget.disabled = false;
     renderPortraitPreview();
     $('portraitDone').classList.add('hidden');
     portraitDialog.showModal();
@@ -239,7 +245,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function closePortraitImport() {
     if (portraitBusy) return;
+    const target = selectedPortraitClass();
     portraitDialog.close();
+    if (savedStudents.size && target) showPortraitSuccess(target, savedStudents.size);
+    savedStudents.clear();
     portraitTiles = [];
     portraitPreview.replaceChildren();
     $('portraitFile').value = '';
@@ -251,6 +260,7 @@ document.addEventListener('DOMContentLoaded', () => {
     closePortraitImport();
   });
   portraitTarget.onchange = renderPortraitPreview;
+  portraitPreview.addEventListener('change', () => updatePortraitSummary());
 
   function renderPortraitPreview() {
     const target = selectedPortraitClass();
@@ -268,14 +278,13 @@ document.addEventListener('DOMContentLoaded', () => {
           <label>Associer à<select data-portrait-match="${i}" aria-describedby="portrait-read-${i}">
             <option value="" ${match ? '' : 'selected'}>Choisir un élève</option>
             <option value=":ignore">Ignorer ce portrait</option>${options}
-          </select></label></li>`;
+          </select></label><small class="portrait-row-status hidden"></small></li>`;
       }
       return `<li>${photo}
         <label>Élève ${i + 1}<input data-portrait-name="${i}" value="${escapeHtml(tile.name)}" maxlength="120" autocomplete="off" spellcheck="false"></label>
         <label class="portrait-choice"><input type="checkbox" data-portrait-include="${i}" checked> Inclure</label></li>`;
     }).join('');
-    $('savePortraits').textContent = target ? 'Ajouter les photos' : 'Créer la classe';
-    $('savePortraits').disabled = portraitBusy || !portraitTiles.length;
+    updatePortraitSummary();
   }
 
   $('portraitFile').onchange = async () => {
@@ -286,6 +295,7 @@ document.addEventListener('DOMContentLoaded', () => {
     input.disabled = portraitTarget.disabled = $('cancelPortraits').disabled = $('savePortraits').disabled = true;
     portraitTiles = [];
     portraitPreview.replaceChildren();
+    portraitSummary.textContent = '';
     portraitStatus.textContent = 'Recherche des portraits…';
     try {
       const tiles = await rosterTiles(file);
@@ -305,35 +315,61 @@ document.addEventListener('DOMContentLoaded', () => {
     } finally {
       input.value = '';
       portraitBusy = false;
-      input.disabled = portraitTarget.disabled = $('cancelPortraits').disabled = false;
+      input.disabled = $('cancelPortraits').disabled = false;
+      portraitTarget.disabled = savedStudents.size > 0;
       renderPortraitPreview();
     }
   };
 
   function portraitImportError(message, field) {
-    portraitStatus.textContent = message;
-    field?.focus();
-    field?.scrollIntoView({block: 'nearest'});
+    portraitSummary.textContent = message;
+    field?.scrollIntoView({block: 'center'});
   }
 
   function collectPortraitAssignments(target) {
     const students = new Map(state.students.filter(p => p.classId === target.id).map(p => [p.id, p]));
-    const assigned = new Map();
-    for (const select of portraitPreview.querySelectorAll('[data-portrait-match]')) {
-      if (!select.value) {
-        return portraitImportError('Associe ce portrait à un élève ou choisis « Ignorer ce portrait ».', select);
-      }
-      if (select.value === ':ignore') continue;
-      if (!students.has(select.value)) {
-        return portraitImportError('Cet élève ne figure plus dans la classe. Rouvre l’import.', select);
-      }
-      if (assigned.has(select.value)) {
-        return portraitImportError('Cet élève est déjà associé à un autre portrait.', select);
-      }
-      assigned.set(select.value, {student: students.get(select.value), photo: portraitTiles[select.dataset.portraitMatch].photo});
+    const selects = Array.from(portraitPreview.querySelectorAll('[data-portrait-match]'));
+    const counts = new Map();
+    for (const {value} of selects) counts.set(value, (counts.get(value) || 0) + 1);
+    const ready = [], ignored = [];
+    let pending = 0;
+    for (const select of selects) {
+      const {value} = select;
+      const row = select.closest('li');
+      const tile = portraitTiles[select.dataset.portraitMatch];
+      const issue = row.querySelector('.portrait-row-status');
+      let message = '';
+      if (value === ':ignore') ignored.push(row);
+      else if (!students.has(value)) message = 'Choisis un élève ou ignore ce portrait.';
+      else if (savedStudents.has(value)) message = 'Un portrait vient déjà d’être enregistré pour cet élève.';
+      else if (counts.get(value) > 1) message = 'Cet élève est sélectionné pour plusieurs portraits.';
+      else ready.push({student: students.get(value), photo: tile.photo, row});
+      if (message) pending++;
+      row.classList.toggle('portrait-pending', Boolean(message));
+      issue.classList.toggle('hidden', !message);
+      issue.textContent = message;
     }
-    if (!assigned.size) return portraitImportError('Associe au moins un portrait à un élève.');
-    return [...assigned.values()];
+    return {ready, ignored, pending};
+  }
+
+  function updatePortraitSummary() {
+    const target = selectedPortraitClass();
+    if (!target) {
+      portraitSummary.textContent = '';
+      saveButton.textContent = 'Créer la classe';
+      saveButton.disabled = portraitBusy || !portraitTiles.length;
+      return;
+    }
+    const {ready, pending, ignored} = collectPortraitAssignments(target);
+    const count = ready.length;
+    saveButton.textContent = pending && count ? `Ajouter ${count} photo${count > 1 ? 's' : ''}` : 'Ajouter les photos';
+    saveButton.disabled = portraitBusy || !count;
+    const parts = [];
+    if (savedStudents.size) parts.push(`${savedStudents.size} enregistré(s)`);
+    if (count) parts.push(`${count} prêt(s) à enregistrer`);
+    if (pending) parts.push(`${pending} à vérifier`);
+    if (ignored.length) parts.push(`${ignored.length} ignoré(s)`);
+    portraitSummary.textContent = parts.join(' · ');
   }
 
   function createClassFromPortraits() {
@@ -362,9 +398,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
   $('savePortraits').onclick = async () => {
     const target = selectedPortraitClass();
-    const assignments = target ? collectPortraitAssignments(target) : null;
+    const batch = target ? collectPortraitAssignments(target) : null;
+    const assignments = batch?.ready;
     const created = target ? null : createClassFromPortraits();
-    if (!assignments && !created) return;
+    if (!assignments?.length && !created) {
+      if (target) updatePortraitSummary();
+      return;
+    }
     portraitBusy = true;
     $('portraitFile').disabled = portraitTarget.disabled = $('cancelPortraits').disabled = $('savePortraits').disabled = true;
     let undo;
@@ -390,14 +430,33 @@ document.addEventListener('DOMContentLoaded', () => {
       return portraitImportError('Le stockage est indisponible ou plein. L’import peut être réessayé.');
     } finally {
       portraitBusy = false;
-      $('portraitFile').disabled = portraitTarget.disabled = $('cancelPortraits').disabled = $('savePortraits').disabled = false;
+      $('portraitFile').disabled = $('cancelPortraits').disabled = saveButton.disabled = false;
+      portraitTarget.disabled = savedStudents.size > 0;
     }
-    closePortraitImport();
-    classOpen((target || created.group).id);
+    if (target) {
+      for (const {student, row} of assignments) {
+        savedStudents.add(student.id);
+        row.remove();
+      }
+      batch.ignored.forEach(row => row.remove());
+      if (batch.pending) {
+        portraitTarget.disabled = true;
+        portraitStatus.textContent = 'Les portraits associés sont enregistrés. Tu peux régler ceux qui restent ou fermer.';
+        updatePortraitSummary();
+        return;
+      }
+      closePortraitImport();
+    } else {
+      closePortraitImport();
+      showPortraitSuccess(created.group, created.students.length);
+    }
+  };
+
+  function showPortraitSuccess(group, count) {
+    classOpen(group.id);
     $('roster').closest('details.rosterbox').open = true;
-    const count = assignments?.length || created.students.length;
     const done = $('portraitDone');
     done.textContent = `${count} portrait${count > 1 ? 's' : ''} enregistré${count > 1 ? 's' : ''}.`;
     done.classList.remove('hidden');
-  };
+  }
 });
