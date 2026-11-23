@@ -550,8 +550,13 @@
         if (opts.debug) (res.dbgRows = res.dbgRows || []).push({ shift, c: C.flat().map(([a, b]) => H(a, b).map(Math.round)), l: row.label, v: vals.map(a => a.map(Math.round).join(' ')), paper: Math.round(paper) });
         return { vals, digits };
       };
-      let rd = readAt(!opts.noShift);
-      if (!opts.noShift && rd.digits.some(d => d.state !== 'ok')) { const r0 = readAt(false); if (r0.digits.every(d => d.state === 'ok')) rd = r0; }
+      let rd = readAt(!opts.noShift), disagree = false;
+      if (!opts.noShift) {
+        const r0 = readAt(false);
+        if (rd.digits.some(d => d.state !== 'ok')) { if (r0.digits.every(d => d.state === 'ok')) rd = r0; }
+        // deux lectures complètes mais différentes (bulles recentrées / position calculée) : ne jamais trancher en silence
+        else if (r0.digits.every(d => d.state === 'ok') && r0.digits.some((d, i) => d.digit !== rd.digits[i].digit)) disagree = r0;
+      }
       const { vals, digits } = rd;
       const all = vals.flat().sort((a, b) => a - b), med = all[Math.floor(all.length / 2)];
       const corrP = [[0, -2.9], [0, 2.9], [-3.2, 0], [3.2, 0]].map(([a, b]) => { const [u, v] = H(F.corr.x + a, y + b); return bilinear(gray, w, h, u, v); }).sort((a, b) => a - b), corr = sampleDisk(gray, w, h, H, F.corr.x, y, 1.3) * 200 / Math.max(20, corrP[2]) < med * 0.8;
@@ -562,6 +567,7 @@
       if (nEmpty) pend[R.block].push(where + ' : ligne incomplète');
       if (digits.some(d => d.state === 'double')) pend[R.block].push(where + ' : deux bulles noircies dans une colonne');
       if (corr) pend[R.block].push(where + ' : correction signalée, compare avec la valeur écrite');
+      if (disagree) pend[R.block].push(where + ' : lecture incertaine (' + rd.digits.map(d => d.digit).join('') + ' ou ' + disagree.digits.map(d => d.digit).join('') + '), vérifie sur la photo');
       if (nEmpty) continue;
       if (row.type === 'time') res.values[row.id] = digits[0].digit + ':' + digits[1].digit + digits[2].digit;
       else if (row.type === 'number') res.values[row.id] = String(digits[0].digit * 10 + digits[1].digit);
@@ -573,13 +579,27 @@
     });
     // temps de passage cumulés : chacun doit être plus grand que le précédent
     if (tpl.cumulative !== false) (tpl.blocks || []).forEach(b => {
+      const rows = b.rows.filter(r => r.type === 'time' && !/estim/i.test(r.label));
       let last = -1;
-      b.rows.filter(r => r.type === 'time' && !/estim/i.test(r.label)).forEach(r => {
+      rows.forEach(r => {
         const v = res.values[r.id], m = v && /^(\d+):(\d\d)$/.exec(v); if (!m) return;
-        const t = +m[1] * 60 + +m[2]; if (t <= last) res.issues.push((b.title ? b.title + ' · ' : '') + r.label + ' : temps plus petit que le précédent, vérifie'); last = t;
+        const t = +m[1] * 60 + +m[2];
+        if (t <= last) { const fix = minuteFix(rows.map(x => res.values[x.id])); res.issues.push((b.title ? b.title + ' · ' : '') + r.label + ' : temps plus petit que le précédent, vérifie' + (fix ? ' (valeur probable : ' + rows[fix.i].label + ' ' + fix.v + ')' : '')); }
+        last = t;
       });
     });
     return res;
+  }
+
+  // Passages incohérents : erreur de lecture la plus fréquente = chiffre des minutes. On cherche l'unique ligne
+  // dont la seule modification des minutes rend toute la course cohérente (passages croissants, 200 m entre 15 s et 2 min 30).
+  function minuteFix(vals) {
+    const sec = vals.map(v => { const m = v && /^(\d+):(\d\d)$/.exec(v); return m ? [+m[1], +m[2]] : null; });
+    if (sec.some(x => !x)) return null;
+    const ok = ts => ts.every((t, i) => { const d = t - (i ? ts[i - 1] : 0); return d >= 15 && d <= 150; });
+    const found = [];
+    sec.forEach(([mn, s], i) => { for (let m2 = 0; m2 <= 9; m2++) if (m2 !== mn) { const ts = sec.map(([a, b], j) => (j === i ? m2 : a) * 60 + b); if (ok(ts)) found.push({ i, v: m2 + ':' + String(s).padStart(2, '0') }); } });
+    return found.length === 1 ? found[0] : null;
   }
 
   function loadImage(src) {
@@ -618,5 +638,5 @@
     return analyse(ctx.getImageData(0, 0, cv.width, cv.height).data, cv.width, cv.height, Object.assign({}, opts, { qrZone }));
   }
 
-  root.Fiche = { _int: { toGray, binarize, squareBlobs, pickMarkers }, FORMATS, layoutFor, ficheSVG, pagesSVG, studentPayload, sparePayload, namePayload, parsePayload, analyse, read };
+  root.Fiche = { _int: { toGray, binarize, squareBlobs, pickMarkers, minuteFix }, FORMATS, layoutFor, ficheSVG, pagesSVG, studentPayload, sparePayload, namePayload, parsePayload, analyse, read };
 })(typeof self !== 'undefined' ? self : globalThis);
