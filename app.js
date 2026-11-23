@@ -66,9 +66,11 @@ function grade(t, s, m) {
   const nc = n.choix === '' ? null : (n.choix || defChoix(s)), choix = CHOIX[nc] ? nc : null, [max2, max3] = choix ? CHOIX[choix] : [null, null];
   const sexOk = s.sex === 'F' || s.sex === 'G', hasReg = B.reg.length > 0;
   const perf = m && m.best != null && sexOk ? perfPts(B, s.sex, m.best) : null;
-  const reg = hasReg && m && m.pace != null ? regulPts(B, m.pace) : null;
+  const holes = [], hReg = hasReg && m && m.pace != null ? pickHole(t, rowHole(B.reg, m.pace), 'reg:' + Math.round(m.pace), 'Régularité', Math.round(m.pace), holes, 'pts') : null;
+  const reg = hasReg && m && m.pace != null ? (hReg != null ? hReg : regulPts(B, m.pace)) : null;
   const afl1 = perf != null && (reg != null || !hasReg) ? perf + (reg || 0) : null;
-  const dEst = m && m.gap != null ? estDeg(B, m.gap) : null;                     // AFL2 · estimer (temps) : degré 1-4
+  const hEst = m && m.gap != null ? pickHole(t, estHole(B.afl2, m.gap), 'est:' + Math.round(m.gap), 'AFL2 · écarts cumulés', Math.round(m.gap), holes, 'degré') : null;
+  const dEst = m && m.gap != null ? (hEst != null ? hEst : estDeg(B, m.gap)) : null;                     // AFL2 · estimer (temps) : degré 1-4
   const d2 = has(n.d2) ? +n.d2 : dEst, d2auto = !has(n.d2) && dEst != null;                       // AFL2 : un seul degré, proposé d'après les écarts cumulés
   const d3 = has(n.d3) ? +n.d3 : has(n.afl3) ? Math.round(n.afl3 * 2) : null;                    // AFL3 · rôle : degré 1-4 (prof)
   const p2 = max2 && d2 != null ? d2 * max2 / 4 : null;
@@ -77,7 +79,7 @@ function grade(t, s, m) {
   const acquired = [afl1, p2, p3].reduce((a, v) => a + (v || 0), 0);
   if (n.disp) return { disp: true, B, choix, max2, max3, role: '', missing: [], acquired: 0, total: null, best: m?.best, pace: m?.pace, gap: m?.gap };
   const missing = [!s.sex && 'F/G', !m && 'fiche', !choix && 'choix', d2 == null && 'AFL2', d3 == null && 'AFL3'].filter(Boolean);
-  return { perf, reg, afl1, dEst, d2, d2auto, d3, p2, p3, max2, max3, role: n.role || '', choix, total, acquired, missing, noSex: !sexOk, B, hasReg, best: m?.best, pace: m?.pace, gap: m?.gap };
+  return { perf, reg, afl1, dEst, d2, d2auto, d3, p2, p3, max2, max3, role: n.role || '', choix, total, acquired, missing, noSex: !sexOk, B, hasReg, best: m?.best, pace: m?.pace, gap: m?.gap, holes };
 }
 const nf = v => v == null ? '—' : String(Math.round(v * 100) / 100).replace('.', ',');
 // Choix de répartition AFL2-AFL3 déjà donné par l'élève (autre évaluation, préparation…) : repris par défaut
@@ -894,10 +896,12 @@ function exportHTML(tid, cid) {
 
 function coverHTML(t, cids, kind) {
   const B = bar(t.bareme), studs = state.students.filter(s => cids.includes(s.classId));
+  const H = B && typeof holesFor === 'function' ? holesFor(t, studs) : [];
   const sts = studs.map(s => scanState(latestScan(s.id, t.id))), valid = sts.filter(x => x === 'validated').length, check = sts.filter(x => x === 'check').length;
   const read = studs.filter(s => latestScan(s.id, t.id)).length, done = B ? studs.filter(s => grade(t, s, (r => r ? metrics(t, r.values) : null)(latestScan(s.id, t.id))).total != null).length : null;
   return '<div class="cover"><p class="sub" style="font-size:16px;letter-spacing:.1em">' + escapeHtml(kind.toUpperCase()) + '</p><h1>' + escapeHtml(t.name) + '</h1>' + (B ? '<p class="kv">' + escapeHtml(B.name) + '</p>' : '') +
     '<p class="kv"><b>Classe(s) :</b> ' + cids.map(c => escapeHtml(className(c))).join(', ') + '</p><p class="kv"><b>Élèves :</b> ' + studs.length + ' · <b>fiches lues :</b> ' + read + (done != null ? ' · <b>notes complètes :</b> ' + done : '') + ' · <b>fiches validées :</b> ' + valid + '</p>' +
+    (H.length ? '<p class="kv"' + (H.some(h => !h.choice) ? ' style="color:#b83246"' : '') + '><b>Trous du barème :</b> ' + escapeHtml(holesText(H)) + '</p>' : '') +
     (read > valid ? '<p class="kv" style="color:#b83246"><b>⚠ ' + (read - valid) + ' fiche(s) non validée(s)' + (check ? ', dont ' + check + ' à vérifier' : '') + ' : notes provisoires, à contrôler avant la saisie officielle.</b></p>' : '') +
     '<p class="kv"><b>Date d’export :</b> ' + new Date().toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }) + '</p><p class="kv" style="margin-top:40px">Enseignant(e) : ........................................ &nbsp; Signature : ....................</p></div>';
 }

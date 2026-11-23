@@ -280,6 +280,15 @@ async function ctrlBulk(mode) {
   }
   await persist(); renderResults();
 }
+/* ---------- Trous du barème : une décision par cas, pour toute l'évaluation ---------- */
+function holesFor(t, studs) {
+  const by = {};
+  studs.forEach(s => { const r = latestScan(s.id, t.id); if (!r) return; const g = grade(t, s, metrics(t, r.values)); ((g && g.holes) || []).forEach(h => { (by[h.key] = by[h.key] || Object.assign({}, h, { names: [] })).names.push(s.name); }); });
+  return Object.values(by).sort((a, b) => a.label.localeCompare(b.label) || a.v - b.v);
+}
+const holeVal = (h, x) => h.unit === 'degré' ? 'degré ' + x : nf(x) + ' pt' + (x > 1 ? 's' : '');
+function holesText(H) { return H.map(h => h.label + ' ' + h.v + ' s → ' + holeVal(h, h.choice === 'fav' ? h.fav : h.def) + (h.choice ? ' (tranche ' + (h.choice === 'fav' ? 'favorable' : 'défavorable') + ' choisie)' : ' (non tranché : tranche défavorable par défaut)')).join(' · '); }
+async function setHole(tid, key, v) { const t = tplById(tid); if (!t) return; t.holes = Object.assign({}, t.holes, { [key]: v }); await persist(); render(); }
 function renderControls() {
   let box = $('ctrlBox'); const t = tplById($('resultTpl').value);
   if (!box) { box = document.createElement('div'); box.id = 'ctrlBox'; box.className = 'ctrlbox'; const tw = document.querySelector('#results .tablewrap'); tw.parentNode.insertBefore(box, tw); }
@@ -300,6 +309,10 @@ function renderControls() {
       (pft.unknown.length ? '<p class="notice">Noms PhotoFinish non reconnus : ' + pft.unknown.map(escapeHtml).join(', ') + '</p>' : '') +
       (missPF.length ? '<p class="muted">Sans temps PhotoFinish : ' + missPF.map(s => escapeHtml(s.name)).join(', ') + '</p>' : '') + '</details>';
   }
+  const H = bar(t.bareme) ? holesFor(t, studs) : [];
+  if (H.length) h += '<div class="ctrl-alert"><h3>⚖️ ' + H.length + ' cas tombe(nt) dans un trou du barème</h3><p class="muted">La valeur est entre deux lignes du barème. Tranche une fois : la décision vaut pour tous les élèves concernés de cette évaluation.</p><ul>' +
+    H.map(h => '<li><div class="citem"><span><b>' + escapeHtml(h.label) + ' : ' + h.v + ' s</b> — ' + h.names.map(escapeHtml).join(', ') + (h.choice ? '' : ' <b style="color:#b83246">· à trancher</b>') + '</span>' +
+      ['def', 'fav'].map(c => '<button class="' + (h.choice === c ? '' : 'secondary') + '" onclick="setHole(\'' + t.id + '\',\'' + h.key + '\',\'' + c + '\')">' + (h.choice === c ? '✓ ' : '') + holeVal(h, h[c]) + ' (' + (c === 'fav' ? 'favorable' : 'défavorable') + ')</button>').join('') + '</div></li>').join('') + '</ul></div>';
   const nA = alerts.reduce((n, x) => n + x.a.length, 0), many = alerts.length > 4 && !ctrlAll, shown = many ? alerts.slice(0, 4) : alerts;
   if (alerts.length) h += '<div class="ctrl-alert"><h3>🚨 ' + alerts.length + ' élève(s) à contrôler</h3>' +
     '<div class="cbulk"><span>Tout d’un coup :</span><button class="cb-me" onclick="ctrlBulk(false)">✓ Garder tous les temps des fiches</button>' + (alerts.some(x => x.a.some(a => a.kind === 'pf' && a.rowId)) ? '<button class="cb-pf" onclick="ctrlBulk(\'pf\')">⏱ Tout prendre de PhotoFinish</button>' : '') + (alerts.some(x => x.a.some(a => a.kind === 'est')) ? '<button class="cb-est" onclick="ctrlBulk(\'est\')">📝 Toutes les estimations annoncées</button>' : '') + '</div><ul>' + shown.map(x => '<li><b>' + escapeHtml(x.s.name) + '</b>' + x.a.map(a => '<div class="citem"><span>' + escapeHtml(a.text) + '</span>' + ctrlButtons(x.r, a) + '</div>').join('') + (x.a.some(a => a.kind === 'pf') ? pfThumbs(pft, x.s, t) : '') + '<button class="linkbtn" onclick="editScan(\'' + x.r.id + '\')">Voir la photo de la fiche</button></li>').join('') + '</ul>' + (many ? '<button class="secondary" onclick="ctrlAll=true;renderControls()">Voir les ' + (alerts.length - 4) + ' autres élèves</button>' : '') + '</div>';
