@@ -347,9 +347,11 @@ function studentDetail(t, s, pft) {
     if (g.v2) { sum.push('Note : <b>' + (g.total != null ? nf(g.total) + ' / ' + nf(g.B.totalMax) : 'incomplète') + '</b>' + (g.perf != null ? ' · performance ' + nf(g.perf) : '') + g.calcs.map((c, i) => c.pts != null ? ' · ' + escapeHtml(g.B.calcs[i].name) + ' ' + nf(c.pts) : '').join('') + g.crits.map((c, i) => c.pts != null ? ' · ' + escapeHtml(g.B.crits[i].name) + ' ' + nf(c.pts) : '').join('')); }
     else sum.push('Note : <b>' + (g.total != null ? nf(g.total) + ' / 20' : 'incomplète') + '</b> · AFL1 ' + nf(g.afl1) + ' (perf. ' + nf(g.perf) + ' + régularité ' + nf(g.reg) + ') · AFL2 ' + (g.d2 ? 'D' + g.d2 + ' = ' + nf(g.p2) : '—') + ' · AFL3 ' + (g.d3 ? 'D' + g.d3 + ' = ' + nf(g.p3) : '—') + (g.choix ? ' · choix ' + escapeHtml(g.choix) : ''));
   }
+  const st = scanState(r);
+  if (st === 'check' && g && !g.disp && g.total != null) sum.push('<b style="color:#b83246">note provisoire : fiche à vérifier</b>');
   h += '<p class="sum">' + sum.join(' · ') + '</p>';
   if (alerts.length) h += '<p class="al">🚨 ' + alerts.map(a => escapeHtml(a.text)).join(' · ') + '</p>';
-  const st = scanState(r); h += '<p class="etat">Fiche : ' + ({ validated: 'validée', auto: 'lue, non validée', check: 'à vérifier' }[st] || '') + (r.observer ? ' · observateur : ' + escapeHtml(r.observer) : '') + '</p>';
+  h += '<p class="etat">Fiche : ' + ({ validated: 'validée', auto: 'lue, non validée', check: 'à vérifier' }[st] || '') + (r.observer ? ' · observateur : ' + escapeHtml(r.observer) : '') + '</p>';
   return h + '</article>';
 }
 function exportDetail(tid, cid) {
