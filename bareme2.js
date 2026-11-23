@@ -34,6 +34,31 @@ function calcValue(type, m) {
   if (type === 'reg_all') { const f = all.flat(); return Math.max(...f) - Math.min(...f); }
   return all.reduce((a, s) => a + Math.max(...s) - Math.min(...s), 0) / all.length;
 }
+/* ---------- Trous du barème ----------
+   Le référentiel liste des valeurs isolées (« 10 s → 3 pts », « 12 s → 2,5 pts ») : une valeur entière tombée entre
+   deux lignes (11 s) est ambiguë. Par défaut l'appli garde la tranche défavorable (comme avant) ; le prof tranche
+   une fois par cas (« 11 s → 3 pts ») et la décision vaut pour tous les élèves de l'évaluation. */
+function rowHole(rows, v) {
+  if (v == null || Math.abs(v - Math.round(v)) > 0.001) return null;
+  const lims = [...new Set(rows.map(r => r.max))].sort((a, b) => a - b);
+  if (lims.some(l => Math.abs(l - v) < 0.001)) return null;
+  const lo = lims.filter(l => l < v).pop(), hi = lims.find(l => l > v);
+  if (lo == null || hi == null) return null;
+  const fav = lookupPts(rows, lo), def = lookupPts(rows, hi);
+  return fav !== def ? { fav, def } : null;
+}
+// Écarts cumulés (AFL2) : référentiel « < 8 s · 9 à 15 s · 16 à 24 s · > 25 s » → 8 s et 25 s ne sont dans aucune tranche
+function estHole(th, g) {
+  if (g == null || th.join() !== '7,15,24') return null;
+  const v = Math.round(g); if (Math.abs(g - v) > 0.001) return null;
+  return v === 8 ? { fav: 4, def: 3 } : v === 25 ? { fav: 2, def: 1 } : null;
+}
+function holeChoice(t, key) { return ((t && t.holes) || {})[key] || null; }
+function pickHole(t, h, key, label, v, holes, unit) {
+  if (!h) return null;
+  const c = holeChoice(t, key); holes.push({ key, label, v, fav: h.fav, def: h.def, choice: c, unit });
+  return c === 'fav' ? h.fav : h.def;
+}
 function estimLevel(c, g) { const th = (c.th || [7, 15, 24]).map(numv); return g <= th[0] ? 4 : g <= th[1] ? 3 : g <= th[2] ? 2 : 1; }
 
 function gradeV2(t, s, m, B) {
@@ -52,11 +77,14 @@ function gradeV2(t, s, m, B) {
       else { perf = ok.reduce((a, v) => a + lookupPts(B.perfRows, v, s.sex), 0) / ok.length; perfVal = null; }
     }
   }
-  const calcs = B.calcs.map(c => { const v = calcValue(c.type, m); return { v, pts: v == null ? null : lookupPts(c.rowsN, v) }; });
+  const holes = [];
+  const calcs = B.calcs.map(c => { const v = calcValue(c.type, m); if (v == null) return { v, pts: null };
+    const hp = c.type === 'estim' || c.type === 'reg_all' ? pickHole(t, rowHole(c.rowsN, v), 'c:' + c.id + ':' + Math.round(v), c.name || CALC_TYPES[c.type][0], Math.round(v), holes, 'pts') : null;
+    return { v, pts: hp != null ? hp : lookupPts(c.rowsN, v) }; });
   const crits = B.crits.map(c => {
     const has = n['k_' + c.id] !== undefined && n['k_' + c.id] !== null && n['k_' + c.id] !== '';
     let level = has ? +n['k_' + c.id] : null, auto = false;
-    if (level == null && c.auto && c.levels === 4 && m && m.gap != null) { level = estimLevel(c, m.gap); auto = true; }
+    if (level == null && c.auto && c.levels === 4 && m && m.gap != null) { const th = (c.th || [7, 15, 24]).map(numv), hl = pickHole(t, estHole(th, m.gap), 'k:' + c.id + ':' + Math.round(m.gap), (c.name || 'AFL2') + ' · écarts cumulés', Math.round(m.gap), holes, 'degré'); level = hl != null ? hl : estimLevel(c, m.gap); auto = true; }
     const sp = B.inSplit(c), max = sp ? (choix ? (c.id === B.split.a ? ma : mb) : null) : critMaxPts(c);
     const pts = level == null ? null : sp ? (max == null ? null : level * max / c.levels) : (c.custom ? (c.ptsN[level - 1] ?? null) : level * c.maxN / c.levels);
     return { level, auto, pts, max, sp };
@@ -65,7 +93,7 @@ function gradeV2(t, s, m, B) {
   const total = parts.every(v => v != null) && (!B.split || choix) ? parts.reduce((a, v) => a + v, 0) : null;
   const acquired = parts.reduce((a, v) => a + (v || 0), 0);
   const missing = [!sexOk && 'F/G', !m && 'fiche', B.split && !choix && 'choix', ...B.crits.filter((c, i) => crits[i].level == null).map(c => c.name || 'critère')].filter(Boolean);
-  return { v2: true, B, perf, perfVal, calcs, crits, choix, total, acquired, missing, noSex: !sexOk };
+  return { v2: true, B, perf, perfVal, calcs, crits, choix, total, acquired, missing, noSex: !sexOk, holes };
 }
 
 /* ---------- Tableau des résultats ---------- */
