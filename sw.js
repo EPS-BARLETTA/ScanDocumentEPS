@@ -1,5 +1,5 @@
 // Mode hors connexion : la version en ligne est prioritaire, la copie locale sert de secours.
-const CACHE = 'scan-eps-v60';
+const CACHE = 'scan-eps-v61';
 const FILES = ['./', './index.html', './fiche.js', './bareme2.js', './app.js', './extras.js', './seance.js', './lib/qrcode.js', './lib/jsQR.js', './manifest.webmanifest', './trombinoscope.js', './ocr/client/tesseract.min.js', './ocr/client/worker.min.js', './ocr/core/tesseract-core-lstm.js', './ocr/client/tesseract-core-lstm.wasm', './ocr/lang/fra.traineddata.gz'];
 
 self.addEventListener('install', e => {

@@ -897,10 +897,12 @@ function exportHTML(tid, cid) {
 function coverHTML(t, cids, kind) {
   const B = bar(t.bareme), studs = state.students.filter(s => cids.includes(s.classId));
   const H = B && typeof holesFor === 'function' ? holesFor(t, studs) : [];
+  const pft0 = typeof pfTimes === 'function' ? pfTimes(t) : null, nTrace = typeof controlTrace === 'function' ? studs.reduce((a, s) => { const r = latestScan(s.id, t.id); return a + (r ? controlTrace(t, s, r, pft0).length : 0); }, 0) : 0;
   const sts = studs.map(s => scanState(latestScan(s.id, t.id))), valid = sts.filter(x => x === 'validated').length, check = sts.filter(x => x === 'check').length;
   const read = studs.filter(s => latestScan(s.id, t.id)).length, done = B ? studs.filter(s => grade(t, s, (r => r ? metrics(t, r.values) : null)(latestScan(s.id, t.id))).total != null).length : null;
   return '<div class="cover"><p class="sub" style="font-size:16px;letter-spacing:.1em">' + escapeHtml(kind.toUpperCase()) + '</p><h1>' + escapeHtml(t.name) + '</h1>' + (B ? '<p class="kv">' + escapeHtml(B.name) + '</p>' : '') +
     '<p class="kv"><b>Classe(s) :</b> ' + cids.map(c => escapeHtml(className(c))).join(', ') + '</p><p class="kv"><b>Élèves :</b> ' + studs.length + ' · <b>fiches lues :</b> ' + read + (done != null ? ' · <b>notes complètes :</b> ' + done : '') + ' · <b>fiches validées :</b> ' + valid + '</p>' +
+    (nTrace ? '<p class="kv"><b>Contrôles :</b> ' + nTrace + ' différence(s) avec PhotoFinish ou les estimations traitée(s) par l’enseignant (détail sur chaque fiche).</p>' : '') +
     (H.length ? '<p class="kv"' + (H.some(h => !h.choice) ? ' style="color:#b83246"' : '') + '><b>Trous du barème :</b> ' + escapeHtml(holesText(H)) + '</p>' : '') +
     (read > valid ? '<p class="kv" style="color:#b83246"><b>⚠ ' + (read - valid) + ' fiche(s) non validée(s)' + (check ? ', dont ' + check + ' à vérifier' : '') + ' : notes provisoires, à contrôler avant la saisie officielle.</b></p>' : '') +
     '<p class="kv"><b>Date d’export :</b> ' + new Date().toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }) + '</p><p class="kv" style="margin-top:40px">Enseignant(e) : ........................................ &nbsp; Signature : ....................</p></div>';
