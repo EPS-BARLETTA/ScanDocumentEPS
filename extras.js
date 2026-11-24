@@ -222,7 +222,7 @@ function pfZoom(k, sid) {
 async function pfSet(k, v) { const t = tplById($('resultTpl').value), P = pfData(t.id); if (k === 'tol') P.tol = Math.max(0, +String(v).replace(',', '.') || 0); else if (k.startsWith('c')) P.files[+k.slice(1)].course = v; else if (k.startsWith('x')) P.files.splice(+k.slice(1), 1); await persist(); renderResults(); }
 
 /* ---------- Alertes de contrôle ---------- */
-function controlAlerts(t, s, r, pft) {
+function controlAlerts(t, s, r, pft, withAcked) {
   if (!t || !s || !r) return [];
   const out = [], n = (s.notes || {})[t.id] || {}, m = metrics(t, r.values);
   estBlocks(t).forEach(({ b, bi, er }) => {
@@ -240,7 +240,13 @@ function controlAlerts(t, s, r, pft) {
     if (f == null) { out.push({ kind: 'pf', key: 'pf' + bi + ':' + pv + '/', rowId: fr && fr.id, val: pv, cur: '', text: (b.title || 'Course') + ' : PhotoFinish ' + fmtPF(p) + ', pas de temps final sur la fiche' }); return; }
     const d = f - p; if (Math.abs(d) > pft.tol) out.push({ kind: 'pf', key: 'pf' + bi + ':' + pv + '/' + fmt(f), rowId: fr && fr.id, val: pv, cur: fmt(f), text: (b.title || 'Course') + ' : fiche ' + fmt(f) + ' · PhotoFinish ' + fmtPF(p) + ' (écart ' + sgn(d) + ' s)' });
   });
-  return out.filter(a => !(r.ack || {})[a.key]);
+  return withAcked ? out : out.filter(a => !(r.ack || {})[a.key]);
+}
+// Alertes déjà traitées par l'enseignant (gardées ou corrigées) : on les garde visibles dans le bilan
+function controlTrace(t, s, r, pft) {
+  const kept = controlAlerts(t, s, r, pft, true).filter(a => (r.ack || {})[a.key]).map(a => a.text + ' → ' + (a.kind === 'pf' ? 'temps de la fiche conservé' : a.kind === 'est' ? 'valeur de la fiche conservée' : 'gardé tel quel'));
+  const fixed = (r.issues || []).filter(i => /^Corrigé :/.test(i));
+  return kept.concat(fixed);
 }
 // Réponse rapide à une alerte : garder la fiche telle quelle, ou prendre la valeur annoncée / PhotoFinish
 async function ctrlAnswer(rid, key, take) {
@@ -346,7 +352,8 @@ function studentDetail(t, s, pft) {
       rows += '<tr class="fin"><td>Temps final</td><td colspan="2"><b>' + fmt(B.final) + '</b></td></tr>';
       if (B.hasEst && B.est != null && B.final != null) rows += '<tr><td>Écart à l’estimation</td><td colspan="2">' + sgn(B.final - B.est) + ' s</td></tr>';
       if (B.segs && B.segs.length > 1) rows += '<tr><td>Régularité (tour le + lent − le + rapide)</td><td colspan="2">' + round1(Math.max(...B.segs) - Math.min(...B.segs)) + ' s</td></tr>';
-      if (pf && pf[k] !== undefined) rows += '<tr><td>PhotoFinish</td><td colspan="2">' + (pf[k] === 'dnf' ? 'non classé' : fmtPF(pf[k]) + (B.final != null ? ' <small>(écart ' + sgn(B.final - pf[k]) + ' s)</small>' : '')) + '</td></tr>';
+      if (pf && pf[k] !== undefined) { const big = pf[k] !== 'dnf' && B.final != null && Math.abs(B.final - pf[k]) > pft.tol;
+        rows += '<tr><td>PhotoFinish</td><td colspan="2">' + (pf[k] === 'dnf' ? 'non classé' : fmtPF(pf[k]) + (B.final != null ? (big ? ' <b style="color:#b83246">(écart ' + sgn(B.final - pf[k]) + ' s · au-delà de la tolérance de ' + nf(pft.tol) + ' s)</b>' : ' <small>(écart ' + sgn(B.final - pf[k]) + ' s)</small>') : '')) + '</td></tr>'; }
     }
     const ph = k >= 0 && pft && pft.ph && pft.ph[s.id] && pft.ph[s.id][k];
     return '<div class="course"><h3>' + escapeHtml(b.title || 'Relevé') + '</h3><table><thead><tr><th></th><th>Temps</th><th>' + (times.length > 1 ? 'Fraction' : '') + '</th></tr></thead><tbody>' + rows + '</tbody></table>' + (ph ? '<figure class="arr"><img src="' + ph.src + '" alt=""><figcaption>Photo d’arrivée · ' + escapeHtml(ph.label) + '</figcaption></figure>' : '') + '</div>';
@@ -364,6 +371,8 @@ function studentDetail(t, s, pft) {
   if (st === 'check' && g && !g.disp && g.total != null) sum.push('<b style="color:#b83246">note provisoire : fiche à vérifier</b>');
   h += '<p class="sum">' + sum.join(' · ') + '</p>';
   if (alerts.length) h += '<p class="al">🚨 ' + alerts.map(a => escapeHtml(a.text)).join(' · ') + '</p>';
+  const trace = controlTrace(t, s, r, pft);
+  if (trace.length) h += '<p class="al" style="color:#0f5132">✔ Contrôlé par l’enseignant : ' + trace.map(escapeHtml).join(' · ') + '</p>';
   h += '<p class="etat">Fiche : ' + ({ validated: 'validée', auto: 'lue, non validée', check: 'à vérifier' }[st] || '') + (r.observer ? ' · observateur : ' + escapeHtml(r.observer) : '') + '</p>';
   return h + '</article>';
 }
